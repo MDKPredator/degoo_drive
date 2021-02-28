@@ -600,7 +600,7 @@ def parse_args(args):
 def get_degoo_content(refresh_interval):
     while True:
         time.sleep(refresh_interval)
-        print('Loading Degoo content')
+        log.debug('Loading Degoo content')
         refresh_degoo_content()
 
 
