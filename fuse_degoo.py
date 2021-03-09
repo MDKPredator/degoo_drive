@@ -34,19 +34,20 @@ log = logging.getLogger(__name__)
 
 degoo_tree_content = {}
 
-ROOT_DEGOO = 0
-
 PATH_ROOT_DEGOO = '/'
 
 cache_thread_running = False
+
+threadLock = threading.Lock()
+
 
 class Operations(pyfuse3.Operations):
     enable_writeback_cache = True
 
     def __init__(self, source, cache_size):
         super().__init__()
-        root_id = self._get_degoo_id(source)
-        self._inode_path_map = {pyfuse3.ROOT_INODE: source, root_id: source}
+        self._inode_path_map = {pyfuse3.ROOT_INODE: source}
+        self._source = source
         self._lookup_cnt = defaultdict(lambda: 0)
         self._fd_inode_map = dict()
         self._inode_fd_map = dict()
@@ -54,6 +55,12 @@ class Operations(pyfuse3.Operations):
         self._degoo_path = dict()
         self._fd_buffer_length = dict()
         self._cache_size = cache_size
+
+    def _set_id_root_degoo(self, id_degoo):
+        self._id_root_degoo = id_degoo
+
+    def _get_id_root_degoo(self):
+        return self._id_root_degoo
 
     def _inode_to_path(self, inode, fullpath=False):
         try:
@@ -101,14 +108,33 @@ class Operations(pyfuse3.Operations):
                 pass
 
     async def lookup(self, inode_p, name, ctx=None):
-        # Avoid caching of files
-        raise pyfuse3.FUSEError(errno.ENOENT)
+        name = fsdecode(name)
+        log.debug('lookup for %s in %d', name, inode_p)
+
+        if inode_p == pyfuse3.ROOT_INODE:
+            inode_p = self._get_id_root_degoo()
+
+        children = self._get_degoo_childs(inode_p)
+        attr = None
+
+        for element in children:
+            if name == element['Name']:
+                attr = self._get_degoo_attrs(element['FilePath'])
+                break
+
+        if attr:
+            return attr
+        else:
+            raise FUSEError(errno.ENOENT)
 
     async def getattr(self, inode, ctx=None):
         if inode in self._inode_fd_map:
             return self._getattr(fd=self._inode_fd_map[inode])
         else:
-            return self._get_degoo_attrs(self._inode_to_path(inode))
+            return self._get_degoo_attrs(self._inode_to_path(inode, fullpath=True))
+
+    async def setattr(self, inode, attr, fields, fh, ctx):
+        return self._get_degoo_attrs(self._inode_to_path(inode, fullpath=True))
 
     async def readlink(self, inode, ctx):
         path = self._inode_to_path(inode)
@@ -139,7 +165,7 @@ class Operations(pyfuse3.Operations):
 
     def _get_degoo_element_by_id(self, element_id):
         if element_id == pyfuse3.ROOT_INODE:
-            element_id = ROOT_DEGOO
+            element_id = self._get_id_root_degoo()
         return degoo_tree_content[element_id]
 
     def _get_degoo_element_path_by_id(self, element_id):
@@ -165,7 +191,7 @@ class Operations(pyfuse3.Operations):
 
         entry = pyfuse3.EntryAttributes()
 
-        if int(element['ID']) == ROOT_DEGOO or element['isFolder']:
+        if int(element['ID']) == self._get_id_root_degoo() or element['isFolder']:
             entry.st_size = 0
             entry.st_mode = (stat_m.S_IFDIR | 0o755)
         else:
@@ -221,18 +247,14 @@ class Operations(pyfuse3.Operations):
         return entry
 
     async def readdir(self, inode, off, token):
-        path = self._inode_to_path(inode)
+        path = self._inode_to_path(inode, fullpath=True)
         log.debug('reading %s', path)
 
-        path_aux = path
-        if '/' in path and pyfuse3.ROOT_INODE != inode:
-            path_aux = path[path.index('/') + 1:]
-
-        parent_id = self._get_degoo_id(path_aux)
-        childs = self._get_degoo_childs(parent_id)
+        parent_id = self._get_degoo_id(path)
+        children = self._get_degoo_childs(parent_id)
         entries = []
-        for element in childs:
-            attr = self._get_degoo_attrs(element['Name'])
+        for element in children:
+            attr = self._get_degoo_attrs(element['FilePath'])
             entries.append((attr.st_ino, element['Name'], attr))
 
         for (ino, name, attr) in sorted(entries):
@@ -277,7 +299,7 @@ class Operations(pyfuse3.Operations):
         else:
             del self._inode_path_map[inode]
 
-        refresh_degoo_content()
+        self.load_degoo_content()
 
     async def rename(self, inode_p_old, name_old, inode_p_new, name_new,
                      flags, ctx):
@@ -299,7 +321,7 @@ class Operations(pyfuse3.Operations):
             # If name it is different, it is a move with rename
             if name_old != name_new:
                 degoo.rename(path_old, name_new)
-                refresh_degoo_content()
+                self.load_degoo_content()
                 path_old = path + '/' + name_new
             path = self._inode_to_path(inode_p_new, fullpath=True)
             degoo.mv(path_old, path)
@@ -315,7 +337,7 @@ class Operations(pyfuse3.Operations):
             del self._inode_path_map[inode]
             self._inode_path_map[inode] = path_new
 
-        refresh_degoo_content()
+        self.load_degoo_content()
 
     async def mkdir(self, inode_p, name, mode, ctx):
         name = fsdecode(name)
@@ -440,6 +462,8 @@ class Operations(pyfuse3.Operations):
             degoo_id, path, URL = degoo.put(source_file, target_path)
 
             log.debug('Upload of file [%s] finished. Id [%s] Url [%s]', filename, degoo_id, URL)
+            if not URL:
+                log.debug('WARN: file [%s] has not been uploaded successfully')
 
             # Get the attributes of the new directory
             attr = self._get_degoo_attrs(path)
@@ -556,6 +580,39 @@ class Operations(pyfuse3.Operations):
                 log.debug('Removing part %s', p.name)
                 p.unlink()
 
+    def _refresh_path(self):
+        for idx, degoo_element in degoo_tree_content.items():
+            attr = self._get_degoo_attrs(degoo_element['FilePath'])
+            inode = attr.st_ino
+            path = degoo_element['FilePath']
+
+            # If path does not exist, it is added
+            if inode not in self._inode_path_map:
+                self._add_path(inode, path)
+            elif inode in self._inode_path_map and self._inode_path_map[inode] != path:
+                # If the element exists, but has changed its path
+                del self._inode_path_map[inode]
+                self._add_path(inode, path)
+
+    def refresh_degoo_content(self, refresh_interval):
+        while True:
+            time.sleep(refresh_interval)
+            log.debug('Loading Degoo content')
+            self.load_degoo_content()
+
+    def load_degoo_content(self):
+        threadLock.acquire()
+
+        global degoo_tree_content
+        degoo_tree_content = degoo.tree_cache()
+
+        id_root_degoo = self._get_degoo_id(self._source)
+        self._set_id_root_degoo(id_root_degoo)
+
+        self._refresh_path()
+
+        threadLock.release()
+
 
 def init_logging(debug=False):
     formatter = logging.Formatter('%(asctime)s.%(msecs)03d %(threadName)s: '
@@ -597,18 +654,6 @@ def parse_args(args):
     return parser.parse_args(args)
 
 
-def get_degoo_content(refresh_interval):
-    while True:
-        time.sleep(refresh_interval)
-        log.debug('Loading Degoo content')
-        refresh_degoo_content()
-
-
-def refresh_degoo_content():
-    global degoo_tree_content
-    degoo_tree_content = degoo.tree_cache()
-
-
 def main():
     options = parse_args(sys.argv[1:])
     init_logging(options.debug)
@@ -625,10 +670,10 @@ def main():
     if options.allow_other:
         log.debug('User access:         %s', options.allow_other)
 
-    log.debug('Reading Degoo content from directory %s', degoo_path)
-    refresh_degoo_content()
-
     operations = Operations(degoo_path, cache_size)
+
+    log.debug('Reading Degoo content from directory %s', degoo_path)
+    operations.load_degoo_content()
 
     log.debug('Mounting...')
     fuse_options = set(pyfuse3.default_options)
@@ -640,10 +685,11 @@ def main():
     mimetypes.init()
     if options.debug_fuse:
         fuse_options.add('debug')
+
     pyfuse3.init(operations, options.mountpoint, fuse_options)
 
     if not disable_refresh:
-        t1 = threading.Thread(target=get_degoo_content, args=(refresh_interval, ))
+        t1 = threading.Thread(target=operations.refresh_degoo_content, args=(refresh_interval,))
         t1.start()
 
     try:
