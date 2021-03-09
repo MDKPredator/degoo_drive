@@ -582,17 +582,18 @@ class Operations(pyfuse3.Operations):
 
     def _refresh_path(self):
         for idx, degoo_element in degoo_tree_content.items():
-            attr = self._get_degoo_attrs(degoo_element['FilePath'])
-            inode = attr.st_ino
-            path = degoo_element['FilePath']
+            if self._source in degoo_element['FilePath']:
+                attr = self._get_degoo_attrs(degoo_element['FilePath'])
+                inode = attr.st_ino
+                path = degoo_element['FilePath']
 
-            # If path does not exist, it is added
-            if inode not in self._inode_path_map:
-                self._add_path(inode, path)
-            elif inode in self._inode_path_map and self._inode_path_map[inode] != path:
-                # If the element exists, but has changed its path
-                del self._inode_path_map[inode]
-                self._add_path(inode, path)
+                # If path does not exist, it is added
+                if inode not in self._inode_path_map:
+                    self._add_path(inode, path)
+                elif inode in self._inode_path_map and self._inode_path_map[inode] != path:
+                    # If the element exists, but has changed its path
+                    del self._inode_path_map[inode]
+                    self._add_path(inode, path)
 
     def refresh_degoo_content(self, refresh_interval):
         while True:
