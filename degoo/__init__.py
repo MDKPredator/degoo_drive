@@ -23,7 +23,7 @@ import hashlib
 import humanfriendly
 import humanize
 import json
-import magic
+import mimetypes
 import os
 import requests
 import sys
@@ -1683,7 +1683,8 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
             # 3. Call setUploadFile3 to inform Degoo it worked and create the Degoo item that maps to it
             # 4. Call getOverlay3 to fetch the Degoo item this created so we can see that worked (and return the download URL)
 
-            MimeTypeOfFile = magic.Magic(mime=True).from_file(local_file)
+            filename = os.path.basename(local_file)
+            MimeTypeOfFile = mimetypes.guess_type(filename)[0]
 
             #################################################################
             ## STEP 1: getBucketWriteAuth4
@@ -1700,7 +1701,8 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
 
             # We now POST to BaseURL and the body is the local_file but all these fields too
             Signature =      result["AuthData"]["Signature"]
-            GoogleAccessId = result["AuthData"]["AccessKey"]["Value"]
+            AccessKey = result["AuthData"]["AccessKey"]["Key"]
+            AccessValue = result["AuthData"]["AccessKey"]["Value"]
             CacheControl =   result["AuthData"]["AdditionalBody"][0]["Value"]  # Only one item in list not sure why indexed
             Policy =         result["AuthData"]["PolicyBase64"]
             ACL =            result["AuthData"]["ACL"]
@@ -1730,7 +1732,7 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
                 ('acl', (None, ACL)),
                 ('policy', (None, Policy)),
                 ('signature', (None, Signature)),
-                ('GoogleAccessId', (None, GoogleAccessId)),
+                (AccessKey, (None, AccessValue)),
                 ('Cache-control', (None, CacheControl)),
                 ('Content-Type', (None, MimeTypeOfFile)),
                 ('file', (os.path.basename(local_file), open(local_file, 'rb'), MimeTypeOfFile))

@@ -92,3 +92,7 @@ Login failed.
 9. Copy **credentials.json** and **default_properties.txt** to degoo config directory: ``cp credentials.json default_properties.txt /root/.config/degoo/``
 10. Re-run **degoo_login** to make sure all is correct. Remember to return to the previous directory: ``cd .. && python3 degoo_login``. You should now see the message ``Successfuly logged in.``
 11. Finally, mount the unit: ``mkdir -p /home/degoo && python3 fuse_degoo.py --debug --allow-other /home/degoo/ &``
+
+# Disclaimer
+
+Uploading files to Degoo (**cp** and **mv** commands) does not work 100% of the time, so it is recommended to use the **cp** command to avoid losing files. In case the upload is unsuccessful, if you have enabled the logs, you will see the following message: **WARN: file [name_of_file.ext] has not been uploaded successfully**

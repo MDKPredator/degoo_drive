@@ -36,6 +36,8 @@ degoo_tree_content = {}
 
 PATH_ROOT_DEGOO = '/'
 
+is_refresh_enabled = True
+
 cache_thread_running = False
 
 threadLock = threading.Lock()
@@ -408,13 +410,13 @@ class Operations(pyfuse3.Operations):
 
             result = size_to_read // self._cache_size
             size = self._calculate_chunk_size(size_to_read)
-            # It is checked if it is necessary to download a new part of the video to buffer it
-            if size_to_read > size - (self._cache_size / 2):
-                # If the thread has not been launched, it is executed
-                if not cache_thread_running:
-                    cache_thread_running = True
-                    t1 = threading.Thread(target=self._cache_file, args=(path_file, size, ))
-                    t1.start()
+
+            next_temp_filename = self._get_temp_file(path_file, self._calculate_chunk_size(size))
+            if not cache_thread_running and not os.path.isfile(next_temp_filename):
+                log.debug('Preparing to download next file [%s]', next_temp_filename)
+                cache_thread_running = True
+                t1 = threading.Thread(target=self._cache_file, args=(path_file, size, ))
+                t1.start()
 
             file_descriptor = os.open(temp_filename, os.O_RDONLY)
             # If the reading is done from the same file
@@ -422,6 +424,8 @@ class Operations(pyfuse3.Operations):
                 os.lseek(file_descriptor, offset - (result * self._cache_size), os.SEEK_SET)
                 byte = os.read(file_descriptor, length)
             else:
+                log.debug('Reading first part from two files. File 1 [%s]', temp_filename)
+
                 # Otherwise, there is a part that is read from one file, and the next from another
                 part_offset = self._cache_size - ((result * self._cache_size) - offset)
                 os.lseek(file_descriptor, part_offset, os.SEEK_SET)
@@ -429,6 +433,7 @@ class Operations(pyfuse3.Operations):
                 byte = os.read(file_descriptor, self._cache_size - length)
 
                 temp_filename = self._get_cached_filename(path_file, size_to_read)
+                log.debug('Reading second part from two files. File 2 [%s]', temp_filename)
 
                 # All files are deleted, except the one to be read
                 self._clear_files(path_file, skip_filename=temp_filename)
@@ -463,7 +468,7 @@ class Operations(pyfuse3.Operations):
 
             log.debug('Upload of file [%s] finished. Id [%s] Url [%s]', filename, degoo_id, URL)
             if not URL:
-                log.debug('WARN: file [%s] has not been uploaded successfully')
+                log.debug('WARN: file [%s] has not been uploaded successfully', filename)
 
             # Get the attributes of the new directory
             attr = self._get_degoo_attrs(path)
@@ -550,6 +555,7 @@ class Operations(pyfuse3.Operations):
         with open(temp_filename, 'wb') as out:
             out.write(r.data)
 
+        log.debug('Downloaded file [%s]', temp_filename)
         cache_thread_running = False
 
     def _get_temp_directory(self):
@@ -596,10 +602,11 @@ class Operations(pyfuse3.Operations):
                     self._add_path(inode, path)
 
     def refresh_degoo_content(self, refresh_interval):
-        while True:
+        while is_refresh_enabled:
             time.sleep(refresh_interval)
             log.debug('Loading Degoo content')
             self.load_degoo_content()
+        log.debug('Refresh content finished')
 
     def load_degoo_content(self):
         threadLock.acquire()
@@ -639,7 +646,7 @@ def parse_args(args):
                         help='Where to mount the file system')
     parser.add_argument('--degoo-path', type=str, default=PATH_ROOT_DEGOO,
                         help='Absolute path from Degoo. Default is ' + PATH_ROOT_DEGOO)
-    parser.add_argument('--cache-size', type=int, default=10,
+    parser.add_argument('--cache-size', type=int, default=15,
                         help='Size of downloaded piece of media files')
     parser.add_argument('--debug', action='store_true', default=False,
                         help='Enable debugging output')
@@ -665,7 +672,7 @@ def main():
     disable_refresh = options.disable_refresh
 
     log.debug('##### Initializating Degoo drive #####')
-    log.debug('Cache size:          %s', str(cache_size) + ' MB')
+    log.debug('Cache size:          %s', str(cache_size) + ' kb')
     log.debug('Root Degoo path:     %s', degoo_path)
     log.debug('Refresh interval:    %s', 'Disabled' if disable_refresh else str(refresh_interval) + ' seconds')
     if options.allow_other:
@@ -697,6 +704,8 @@ def main():
         log.debug('Entering main loop..')
         trio.run(pyfuse3.main)
     except:
+        global is_refresh_enabled
+        is_refresh_enabled = False
         pyfuse3.close(unmount=True)
         raise
 
