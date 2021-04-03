@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pyfuse3
 from argparse import ArgumentParser
@@ -21,6 +22,7 @@ import tempfile
 import threading
 import mimetypes
 import degoo
+import requests
 
 # to load the module from there first.
 basedir = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), '..'))
@@ -36,17 +38,25 @@ degoo_tree_content = {}
 
 PATH_ROOT_DEGOO = '/'
 
+DEGOO_HOSTNAME_EU = 'c.degoo.eu'
+
+http = urllib3.PoolManager(maxsize=10, retries=False, timeout=urllib3.Timeout(connect=5.0, read=10.0))
+
+percentage_read = 25
+
 is_refresh_enabled = True
 
 cache_thread_running = False
 
 threadLock = threading.Lock()
 
+requests_control = []
+
 
 class Operations(pyfuse3.Operations):
     enable_writeback_cache = True
 
-    def __init__(self, source, cache_size):
+    def __init__(self, source, cache_size, flood_sleep_time, flood_time_to_check, flood_max_requests):
         super().__init__()
         self._inode_path_map = {pyfuse3.ROOT_INODE: source}
         self._source = source
@@ -57,6 +67,13 @@ class Operations(pyfuse3.Operations):
         self._degoo_path = dict()
         self._fd_buffer_length = dict()
         self._cache_size = cache_size
+        self._min_size_read_next_part = (percentage_read * self._cache_size) / 100
+        # Waiting time before resuming requests once the maximum has been reached
+        self._flood_sleep_time = flood_sleep_time
+        # Request control period
+        self._flood_time_to_check = flood_time_to_check
+        # Maximum number of requests in the period set by the variable "_flood_time_to_check"
+        self._flood_max_requests = flood_max_requests
 
     def _set_id_root_degoo(self, id_degoo):
         self._id_root_degoo = id_degoo
@@ -394,25 +411,34 @@ class Operations(pyfuse3.Operations):
             if not url:
                 raise pyfuse3.FUSEError(errno.ENOENT)
 
-            http = urllib3.PoolManager()
             http.headers['Range'] = 'bytes=%s-%s' % (offset, offset + length - 1)
-            r = http.request('GET', url)
-
-            return r.data
+            try:
+                response = http.request('GET', url)
+                return response.data
+            except urllib3.exceptions.HTTPError as e:
+                log.debug('Error getting info for file [%s]: %s', path_file, str(e))
         else:
             size_to_read = offset + length
+
             # Get the filename
             temp_filename = self._get_cached_filename(path_file, offset)
 
             # If it exists, it is cached
             if not os.path.isfile(temp_filename):
+                self._check_requests()
                 self._cache_file(path_file, size_to_read)
 
             result = size_to_read // self._cache_size
             size = self._calculate_chunk_size(size_to_read)
 
             next_temp_filename = self._get_temp_file(path_file, self._calculate_chunk_size(size))
-            if not cache_thread_running and not os.path.isfile(next_temp_filename):
+
+            # 1 - Check that at least a percentage of the file has been read before downloading the next piece of data
+            # 2 - Check that the size to be read is smaller than the size of the file
+            if size_to_read > self._min_size_read_next_part and size < self._get_degoo_element_by_id(fd)['Size'] \
+                    and not cache_thread_running and not os.path.isfile(next_temp_filename):
+                self._check_requests()
+
                 log.debug('Preparing to download next file [%s]', next_temp_filename)
                 cache_thread_running = True
                 t1 = threading.Thread(target=self._cache_file, args=(path_file, size, ))
@@ -510,6 +536,23 @@ class Operations(pyfuse3.Operations):
         del self._inode_path_map[inode]
         os.remove(source_file)
 
+    def _check_requests(self):
+        global requests_control
+        requests_control.append(datetime.datetime.now())
+        self._control_requests_flood()
+
+    def _control_requests_flood(self):
+        global requests_control
+
+        last_minute = datetime.datetime.now() - datetime.timedelta(minutes=self._flood_time_to_check)
+        requests_control = [x for x in requests_control if x >= last_minute]
+        number_of_requests = len(requests_control)
+        log.debug('Number of requests made in %s minute(s): %s', str(self._flood_time_to_check), str(number_of_requests))
+        if number_of_requests > self._flood_max_requests:
+            log.debug('Reached max of requests %s in %s minutes. Waiting %s seconds',
+                      str(self._flood_max_requests), str(self._flood_time_to_check), str(self._flood_sleep_time))
+            time.sleep(self._flood_sleep_time)
+
     def _is_media(self, filename):
         is_media_type = False
         if '/' in filename:
@@ -538,6 +581,12 @@ class Operations(pyfuse3.Operations):
         if not url:
             raise pyfuse3.FUSEError(errno.ENOENT)
 
+        url_parsed = urlparse(url)
+        # It seems to go faster with the .eu domain
+        if url_parsed.hostname != DEGOO_HOSTNAME_EU:
+            log.debug('Changing hostname [%s] to [%s]', url_parsed.hostname, DEGOO_HOSTNAME_EU)
+            url = url_parsed._replace(netloc=DEGOO_HOSTNAME_EU).geturl()
+
         result = size_to_read // self._cache_size
         size = self._calculate_chunk_size(size_to_read)
 
@@ -548,14 +597,17 @@ class Operations(pyfuse3.Operations):
             return
 
         log.debug('Downloading [%s] filepart %d-%d', temp_filename, result * self._cache_size, size - 1)
-        http = urllib3.PoolManager()
         http.headers['Range'] = 'bytes=%s-%s' % (result * self._cache_size, size - 1)
-        r = http.request('GET', url)
+        try:
+            response = http.request('GET', url)
 
-        with open(temp_filename, 'wb') as out:
-            out.write(r.data)
+            with open(temp_filename, 'wb') as out:
+                out.write(response.data)
 
-        log.debug('Downloaded file [%s]', temp_filename)
+                log.debug('Downloaded file [%s]', temp_filename)
+        except requests.exceptions.ConnectionError as e:
+            log.debug('Error getting info for file [%s]: %s', temp_filename, str(e))
+
         cache_thread_running = False
 
     def _get_temp_directory(self):
@@ -658,6 +710,12 @@ def parse_args(args):
                         help='Allow access to another users')
     parser.add_argument('--disable-refresh', action='store_true', default=False,
                         help='Disable automatic refresh')
+    parser.add_argument('--flood-sleep-time', action='store_true', default=60,
+                        help='Waiting time, in seconds, before resuming requests once the maximum has been reached')
+    parser.add_argument('--flood-max-requests', action='store_true', default=20,
+                        help='Maximum number of requests in the period')
+    parser.add_argument('--flood-time-to-check', action='store_true', default=1,
+                        help='Request control period, in minutes')
 
     return parser.parse_args(args)
 
@@ -675,10 +733,15 @@ def main():
     log.debug('Cache size:          %s', str(cache_size) + ' kb')
     log.debug('Root Degoo path:     %s', degoo_path)
     log.debug('Refresh interval:    %s', 'Disabled' if disable_refresh else str(refresh_interval) + ' seconds')
+    log.debug('Flood sleep time:    %s seconds', str(options.flood_sleep_time))
+    log.debug('Flood max requests:  %s', str(options.flood_max_requests))
+    log.debug('Flood time check:    %s minute(s)', str(options.flood_time_to_check))
+
     if options.allow_other:
         log.debug('User access:         %s', options.allow_other)
 
-    operations = Operations(degoo_path, cache_size)
+    operations = Operations(source=degoo_path, cache_size=cache_size, flood_sleep_time=options.flood_sleep_time,
+                            flood_time_to_check=options.flood_time_to_check, flood_max_requests=options.flood_max_requests)
 
     log.debug('Reading Degoo content from directory %s', degoo_path)
     operations.load_degoo_content()

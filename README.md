@@ -57,6 +57,9 @@ The following options are available:
 * ``--allow-other`` Allows other users to access files
 * ``--refresh-interval`` Time, in minutes, that Degoo information is refreshed. Default is 10 minutes
 * ``--disable-refresh`` Disables the refresh
+* ``--flood-sleep-time`` Waiting time, in seconds, before resuming requests once the maximum has been reached
+* ``--flood-max-requests`` Maximum number of requests in the period
+* ``--flood-time-to-check`` Request control period, in minutes
 
 ## Docker
 
