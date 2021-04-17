@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 
+import datetime
+import errno
+import faulthandler
+import logging
+import mimetypes
 import os
+import stat as stat_m
 import sys
+import tempfile
+import threading
 import time
+from argparse import ArgumentParser
+from collections import defaultdict
+from os import fsencode, fsdecode
 from pathlib import Path
 from urllib.parse import urlparse
 
 import pyfuse3
-from argparse import ArgumentParser
-import errno
-import logging
-import stat as stat_m
-from pyfuse3 import FUSEError
-from os import fsencode, fsdecode
-from collections import defaultdict
-import trio
-import faulthandler
-import urllib3
-import datetime
-import tempfile
-import threading
-import mimetypes
-import degoo
 import requests
+import trio
+import urllib3
+from pyfuse3 import FUSEError
+
+import degoo
 
 # to load the module from there first.
 basedir = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), '..'))
@@ -47,6 +48,8 @@ percentage_read = 25
 is_refresh_enabled = True
 
 cache_thread_running = False
+
+caching_file_list = []
 
 threadLock = threading.Lock()
 
@@ -420,28 +423,30 @@ class Operations(pyfuse3.Operations):
         else:
             size_to_read = offset + length
 
-            # Get the filename
-            temp_filename = self._get_cached_filename(path_file, offset)
+            first_file_part = offset // self._cache_size
+            second_file_part = first_file_part + 1
 
-            # If it exists, it is cached
+            # Get the filename
+            temp_filename = self._get_temp_file(path_file, first_file_part)
+
             if not os.path.isfile(temp_filename):
                 self._check_requests()
-                self._cache_file(path_file, size_to_read)
+                self._cache_file(path_file, first_file_part)
 
             result = size_to_read // self._cache_size
-            size = self._calculate_chunk_size(size_to_read)
 
-            next_temp_filename = self._get_temp_file(path_file, self._calculate_chunk_size(size))
+            next_temp_filename = self._get_temp_file(path_file, second_file_part)
 
             # 1 - Check that at least a percentage of the file has been read before downloading the next piece of data
             # 2 - Check that the size to be read is smaller than the size of the file
-            if size_to_read > self._min_size_read_next_part and size < self._get_degoo_element_by_id(fd)['Size'] \
+            if self._min_size_read_next_part < size_to_read < self._get_degoo_element_by_id(fd)['Size'] \
                     and not cache_thread_running and not os.path.isfile(next_temp_filename):
                 self._check_requests()
 
                 log.debug('Preparing to download next file [%s]', next_temp_filename)
                 cache_thread_running = True
-                t1 = threading.Thread(target=self._cache_file, args=(path_file, size, ))
+                caching_file_list.append(next_temp_filename)
+                t1 = threading.Thread(target=self._cache_file, args=(path_file, second_file_part,))
                 t1.start()
 
             file_descriptor = os.open(temp_filename, os.O_RDONLY)
@@ -458,18 +463,19 @@ class Operations(pyfuse3.Operations):
                 # The reading is made from where it corresponds to the end of the file
                 byte = os.read(file_descriptor, self._cache_size - length)
 
-                temp_filename = self._get_cached_filename(path_file, size_to_read)
-                log.debug('Reading second part from two files. File 2 [%s]', temp_filename)
+                log.debug('Reading second part from two files. File 2 [%s]', next_temp_filename)
 
                 # All files are deleted, except the one to be read
-                self._clear_files(path_file, skip_filename=temp_filename)
+                self._clear_files(path_file, skip_filename=next_temp_filename)
 
-                # If the second file does not exist, it is downloaded before reading it
-                if not os.path.isfile(temp_filename):
-                    self._cache_file(path_file, size_to_read)
+                retries = 0
+                while next_temp_filename in caching_file_list and retries < 10:
+                    log.debug('Waiting to read second part file [%s]', next_temp_filename)
+                    retries += 1
+                    time.sleep(0.5)
 
                 # The rest of the contents of the following file are read
-                file_descriptor = os.open(temp_filename, os.O_RDONLY)
+                file_descriptor = os.open(next_temp_filename, os.O_RDONLY)
                 os.lseek(file_descriptor, 0, os.SEEK_SET)
                 byte += os.read(file_descriptor, length - len(byte))
 
@@ -566,16 +572,10 @@ class Operations(pyfuse3.Operations):
                 is_media_type = True
         return is_media_type
 
-    def _calculate_chunk_size(self, size_to_read):
-        result = size_to_read // self._cache_size
-        return (result + 1) * self._cache_size
-
-    def _get_cached_filename(self, degoo_path_file, size_to_read):
-        size = self._calculate_chunk_size(size_to_read)
-        return self._get_temp_file(degoo_path_file, size)
-
-    def _cache_file(self, degoo_path_file, size_to_read):
+    def _cache_file(self, degoo_path_file, file_part):
         global cache_thread_running
+        global caching_file_list
+
         url = degoo.get_url_file(degoo_path_file)
 
         if not url:
@@ -587,39 +587,37 @@ class Operations(pyfuse3.Operations):
             log.debug('Changing hostname [%s] to [%s]', url_parsed.hostname, DEGOO_HOSTNAME_EU)
             url = url_parsed._replace(netloc=DEGOO_HOSTNAME_EU).geturl()
 
-        result = size_to_read // self._cache_size
-        size = self._calculate_chunk_size(size_to_read)
+        size = (file_part * self._cache_size) + self._cache_size
 
-        temp_filename = self._get_temp_file(degoo_path_file, size)
-        # If the file has already been downloaded we exit
-        if os.path.isfile(temp_filename):
-            cache_thread_running = False
-            return
+        temp_filename = self._get_temp_file(degoo_path_file, file_part)
 
-        log.debug('Downloading [%s] filepart %d-%d', temp_filename, result * self._cache_size, size - 1)
-        http.headers['Range'] = 'bytes=%s-%s' % (result * self._cache_size, size - 1)
-        try:
-            response = http.request('GET', url)
+        if not os.path.isfile(temp_filename):
+            log.debug('Downloading [%s] filepart %d-%d', temp_filename, file_part * self._cache_size, size - 1)
+            http.headers['Range'] = 'bytes=%s-%s' % (file_part * self._cache_size, size - 1)
+            try:
+                response = http.request('GET', url)
 
-            with open(temp_filename, 'wb') as out:
-                out.write(response.data)
+                with open(temp_filename, 'wb') as out:
+                    out.write(response.data)
 
-                log.debug('Downloaded file [%s]', temp_filename)
-        except requests.exceptions.ConnectionError as e:
-            log.debug('Error getting info for file [%s]: %s', temp_filename, str(e))
+                    log.debug('Downloaded file [%s]', temp_filename)
+            except requests.exceptions.ConnectionError as e:
+                log.debug('Error getting info for file [%s]: %s', temp_filename, str(e))
 
+        if temp_filename in caching_file_list:
+            caching_file_list.remove(temp_filename)
         cache_thread_running = False
 
     def _get_temp_directory(self):
         return tempfile.gettempdir() + os.sep
 
-    def _get_temp_file(self, degoo_path_file, last_byte):
+    def _get_temp_file(self, degoo_path_file, filepart):
         filename = degoo_path_file
         if '/' in filename:
             filename = filename[filename.rfind('/') + 1:]
         name = filename[:filename.rfind('.')]
         extension = filename[filename.rfind('.') + 1:]
-        temp_filename = name + '_' + str(last_byte) + '.' + extension
+        temp_filename = name + '_' + str(filepart) + '.' + extension
 
         return self._get_temp_directory() + temp_filename
 
