@@ -454,6 +454,7 @@ class Operations(pyfuse3.Operations):
             if offset - (result * self._cache_size) >= 0:
                 os.lseek(file_descriptor, offset - (result * self._cache_size), os.SEEK_SET)
                 byte = os.read(file_descriptor, length)
+                os.close(file_descriptor)
             else:
                 log.debug('Reading first part from two files. File 1 [%s]', temp_filename)
 
@@ -462,6 +463,7 @@ class Operations(pyfuse3.Operations):
                 os.lseek(file_descriptor, part_offset, os.SEEK_SET)
                 # The reading is made from where it corresponds to the end of the file
                 byte = os.read(file_descriptor, self._cache_size - length)
+                os.close(file_descriptor)
 
                 log.debug('Reading second part from two files. File 2 [%s]', next_temp_filename)
 
@@ -474,10 +476,14 @@ class Operations(pyfuse3.Operations):
                     retries += 1
                     time.sleep(0.5)
 
+                if not os.path.isfile(next_temp_filename):
+                    raise pyfuse3.FUSEError(errno.ENOENT)
+
                 # The rest of the contents of the following file are read
                 file_descriptor = os.open(next_temp_filename, os.O_RDONLY)
                 os.lseek(file_descriptor, 0, os.SEEK_SET)
                 byte += os.read(file_descriptor, length - len(byte))
+                os.close(file_descriptor)
 
             return byte
 
