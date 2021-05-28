@@ -688,7 +688,7 @@ class API:
         request = { "operationName": "GetFileChildren3",
                     "variables": {
                         "Token": self.KEYS["Token"],
-                        "ParentID": f"{dir_id}",
+                        "ParentID": -1 if dir_id == 0 else f"{dir_id}",
                         "Limit": self.LIMIT_MAX,
                         "Order": 3
                         },
@@ -1700,13 +1700,13 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
             BaseURL = result["AuthData"]["BaseURL"]
 
             # We now POST to BaseURL and the body is the local_file but all these fields too
-            Signature =      result["AuthData"]["Signature"]
+            Signature = result["AuthData"]["Signature"]
             AccessKey = result["AuthData"]["AccessKey"]["Key"]
             AccessValue = result["AuthData"]["AccessKey"]["Value"]
-            CacheControl =   result["AuthData"]["AdditionalBody"][0]["Value"]  # Only one item in list not sure why indexed
-            Policy =         result["AuthData"]["PolicyBase64"]
-            ACL =            result["AuthData"]["ACL"]
-            KeyPrefix =      result["AuthData"]["KeyPrefix"]  # Has a trailing /
+            CacheControl = result["AuthData"]["AdditionalBody"][0]["Value"]  # Only one item in list not sure why indexed
+            Policy = result["AuthData"]["PolicyBase64"]
+            ACL = result["AuthData"]["ACL"]
+            KeyPrefix = result["AuthData"]["KeyPrefix"]  # Has a trailing /
 
             # This one is a bit mysterious. The Key seems to be made up of 4 parts
             # separated by /. The first two are provided by getBucketWriteAuth4 as
@@ -1971,8 +1971,7 @@ def tree_cache(dir_id=0, show_times=False, _done=[]):
     global __CACHE_CONTENTS__
     global __CACHE_ITEMS__
 
-    __CACHE_CONTENTS__ = {}
-    __CACHE_ITEMS__ = {0: {
+    root_path = {
         "ID": 0,
         "ParentID": None,
         "Name": "/",
@@ -1980,7 +1979,8 @@ def tree_cache(dir_id=0, show_times=False, _done=[]):
         "Category": None,
         "CategoryName": "Root",
     }
-    }
+    __CACHE_CONTENTS__ = {}
+    __CACHE_ITEMS__ = {0: root_path, 1: root_path}
     tree(dir_id, show_times, _done)
     return __CACHE_ITEMS__
 
