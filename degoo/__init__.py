@@ -108,7 +108,9 @@ __CACHE_ITEMS__ = {0: {
                         "CategoryName": "Root",
                         }
                     }
-__CACHE_CONTENTS__ = {} 
+__CACHE_CONTENTS__ = {}
+
+FILE_CHILDREN_LIMIT = 50
 
 ###########################################################################
 # Support functions
@@ -689,7 +691,7 @@ class API:
                     "variables": {
                         "Token": self.KEYS["Token"],
                         "ParentID": -1 if dir_id == 0 else f"{dir_id}",
-                        "Limit": self.LIMIT_MAX,
+                        "Limit": FILE_CHILDREN_LIMIT,
                         "Order": 3
                         },
                     "query": query
