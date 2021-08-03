@@ -675,11 +675,12 @@ class API:
         else:
             raise DegooError(f"getOverlay3 failed with: {response.text}")
     
-    def getFileChildren3(self, dir_id):
+    def getFileChildren3(self, dir_id, next_token = None):
         '''
         A Degoo Graph API call: gets the contents of a Degoo directory (the children of a Degoo item that is a Folder)
         
         :param dir_id: The ID of a Degoo Folder item (might work for other items too?)
+        :param next_token: Token for next page
         
         :returns: A list of property dictionaries, one for each child, contianing the properties of that child.
         '''
@@ -692,7 +693,8 @@ class API:
                         "Token": self.KEYS["Token"],
                         "ParentID": -1 if dir_id == 0 else f"{dir_id}",
                         "Limit": FILE_CHILDREN_LIMIT,
-                        "Order": 3
+                        "Order": 3,
+                        "NextToken": next_token if next_token else ''
                         },
                     "query": query
                    }
@@ -718,11 +720,6 @@ class API:
                 items = rd["data"]["getFileChildren3"]["Items"]
                 
                 if items:
-                    next = rd["data"]["getFileChildren3"]["NextToken"]  # @ReservedAssignment
-                    if next:
-                        # TODO: Work out what to do in this case.
-                        print(f"WARNING: PAGINATION ISSUE, NextToken={next}", file=sys.stderr)
-                        
                     # Fix FilePath by prepending it with a Device name.and converting 
                     # / to os.sep so it becomes a valid os path as well.
                     if dir_id == 0:
@@ -771,7 +768,12 @@ class API:
                         i["Time_LastModified"] = times[1]
                         i["Time_LastUpload"]   = times[2]
                     
-                    self.NAMELEN = max([len(i["Name"]) for i in items]) 
+                    self.NAMELEN = max([len(i["Name"]) for i in items])
+
+                    next = rd["data"]["getFileChildren3"]["NextToken"]  # @ReservedAssignment
+                    if next:
+                        next_page = self.getFileChildren3(dir_id, next)
+                        items.extend(next_page)
                 
                 return items
         else:
