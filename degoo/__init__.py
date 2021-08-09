@@ -29,6 +29,7 @@ import requests
 import sys
 import time
 import wget
+import jwt
 from shutil import copyfile
 from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from clint.textui.progress import Bar as ProgressBar
@@ -79,7 +80,8 @@ command_prefix = "degoo_"
 
 # The URLS that the Degoo API relies upon
 URL_login = "https://rest-api.degoo.com/login"
-URL_API   = "https://production-appsync.degoo.com/graphql"
+URL_API = "https://production-appsync.degoo.com/graphql"
+URL_ACCESS_TOKEN = "https://rest-api.degoo.com/access-token"
 
 # Get the path to user configuration diectory for this app
 conf_dir = user_config_dir("degoo")
@@ -428,6 +430,25 @@ class API:
         
         return (c_dt, m_dt, u_dt)        
     
+    def _get_token(self):
+        deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False})
+        expired_time = deserialized['exp']
+        if datetime.datetime.today().timestamp() > expired_time:
+            print('Token expired. Refreshing')
+            data = {'refreshtoken': 'wC6WZg..-YzEVhozCasL4kA0E9-eUWk5SSmJFneOtP1nQUbOIU61ARMC2hrxOASlWejZ2ErY40lTwkWgyiBB8A'}
+            response = requests.post(URL_ACCESS_TOKEN, data=json.dumps(data))
+
+            if response.ok:
+                rd = json.loads(response.text)
+
+                keys = {"Token": rd["AccessToken"], "x-api-key": api.API_KEY}
+                self.KEYS["Token"] = keys["Token"]
+
+                with open(keys_file, "w") as file:
+                    file.write(json.dumps(keys))
+
+        return self.KEYS["Token"]
+
     def check_sum(self, filename, blocksize=65536):
         '''
         When uploading files Degoo uses a 2 step process:
@@ -486,7 +507,8 @@ class API:
 
         request = {"operationName": "SetRenameFile",
                    "variables": {
-                       "Token": self.KEYS["Token"],
+                       # "Token": self.KEYS["Token"],
+                       "Token": self._get_token(),
                        "FileRenames": [{
                            "ID": file_id,
                            "NewName": new_name
@@ -526,7 +548,8 @@ class API:
 
         request = {"operationName": "SetMoveFile",
                    "variables": {
-                       "Token": self.KEYS["Token"],
+                       # "Token": self.KEYS["Token"],
+                       "Token": self._get_token(),
                        "NewParentID": new_parent_id,
                        "FileIDs": [
                            file_id
@@ -564,7 +587,10 @@ class API:
         query = f"query GetUserInfo($Token: String!) {{ {func} }}"
         
         request = { "operationName": "GetUserInfo",
-                    "variables": { "Token": self.KEYS["Token"] },
+                    "variables": {
+                        # "Token": self.KEYS["Token"]
+                        "Token": self._get_token()
+                    },
                     "query": query
                    }
         
@@ -612,7 +638,8 @@ class API:
         
         request = { "operationName": "GetOverlay3",
                     "variables": {
-                        "Token": self.KEYS["Token"],
+                        # "Token": self.KEYS["Token"],
+                        "Token": self._get_token(),
                         "ID": {"FileID": degoo_id}
                         },
                     "query": query
@@ -690,7 +717,8 @@ class API:
         
         request = { "operationName": "GetFileChildren3",
                     "variables": {
-                        "Token": self.KEYS["Token"],
+                        # "Token": self.KEYS["Token"],
+                        "Token": self._get_token(),
                         "ParentID": -1 if dir_id == 0 else f"{dir_id}",
                         "Limit": FILE_CHILDREN_LIMIT,
                         "Order": 3,
@@ -794,7 +822,8 @@ class API:
         
         request = { "operationName": "GetFilesFromPaths",
                     "variables": {
-                        "Token": self.KEYS["Token"],
+                        # "Token": self.KEYS["Token"],
+                        "Token": self._get_token(),
                         "FileIDPaths": [{
                             "DeviceID": device_id,
                             "Path": path,
@@ -844,7 +873,8 @@ class API:
     
         request = { "operationName": "SetDeleteFile5",
                     "variables": {
-                        "Token": self.KEYS["Token"],
+                        # "Token": self.KEYS["Token"],
+                        "Token": self._get_token(),
                         "IDs": [{ "FileID": degoo_id }],
                         "IsInRecycleBin": False,
                         },
@@ -903,7 +933,8 @@ class API:
         # to provide the checksum.
         request = { "operationName": "SetUploadFile3",
                     "variables": {
-                        "Token": self.KEYS["Token"],
+                        # "Token": self.KEYS["Token"],
+                        "Token": self._get_token(),
                         "FileInfos": [{
                             "Checksum": checksum,
                             "Name": name,
@@ -968,7 +999,8 @@ class API:
         
         request = { "operationName": "GetBucketWriteAuth4",
                     "variables": {
-                        "Token": self.KEYS["Token"],
+                        # "Token": self.KEYS["Token"],
+                        "Token": self._get_token(),
                         "ParentID": f"{dir_id}",
                         "StorageUploadInfos":[]
                         },

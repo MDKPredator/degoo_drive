@@ -18,7 +18,7 @@ apt install -y python3.8
 apt install -y python3-pip
 apt install -y pkg-config
 
-python3.8 -m pip install appdirs wget python-magic humanize humanfriendly python-dateutil requests clint requests_toolbelt pyfuse3
+python3.8 -m pip install appdirs wget python-magic humanize humanfriendly python-dateutil requests clint requests_toolbelt pyfuse3 pyjwt
 ````
 
 All in one:
@@ -28,7 +28,7 @@ apt update && apt install -y --no-install-recommends git libfuse3-dev fuse3 pyth
 
 ## Installation
 
-You must clone this project with ``git clone``. Ensure you have installed git: ``apt install git``
+You must clone this repository ``git clone https://github.com/MDKPredator/degoo_drive``. Ensure you have installed git: ``apt install git``
 
 ## Configuration
 

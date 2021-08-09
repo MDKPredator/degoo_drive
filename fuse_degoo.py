@@ -420,6 +420,8 @@ class Operations(pyfuse3.Operations):
                 return response.data
             except urllib3.exceptions.HTTPError as e:
                 log.debug('Error getting info for file [%s]: %s', path_file, str(e))
+            except requests.exceptions.Timeout as e:
+                log.debug('Timeout for file [%s]: %s', path_file, str(e))
         else:
             size_to_read = offset + length
 
@@ -609,6 +611,8 @@ class Operations(pyfuse3.Operations):
                     log.debug('Downloaded file [%s]', temp_filename)
             except requests.exceptions.ConnectionError as e:
                 log.debug('Error getting info for file [%s]: %s', temp_filename, str(e))
+            except requests.exceptions.Timeout as e:
+                log.debug('Timeout for file [%s]: %s', temp_filename, str(e))
 
         if temp_filename in caching_file_list:
             caching_file_list.remove(temp_filename)
