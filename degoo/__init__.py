@@ -507,7 +507,6 @@ class API:
 
         request = {"operationName": "SetRenameFile",
                    "variables": {
-                       # "Token": self.KEYS["Token"],
                        "Token": self._get_token(),
                        "FileRenames": [{
                            "ID": file_id,
@@ -548,7 +547,6 @@ class API:
 
         request = {"operationName": "SetMoveFile",
                    "variables": {
-                       # "Token": self.KEYS["Token"],
                        "Token": self._get_token(),
                        "NewParentID": new_parent_id,
                        "FileIDs": [
@@ -588,7 +586,6 @@ class API:
         
         request = { "operationName": "GetUserInfo",
                     "variables": {
-                        # "Token": self.KEYS["Token"]
                         "Token": self._get_token()
                     },
                     "query": query
@@ -638,7 +635,6 @@ class API:
         
         request = { "operationName": "GetOverlay3",
                     "variables": {
-                        # "Token": self.KEYS["Token"],
                         "Token": self._get_token(),
                         "ID": {"FileID": degoo_id}
                         },
@@ -717,7 +713,6 @@ class API:
         
         request = { "operationName": "GetFileChildren3",
                     "variables": {
-                        # "Token": self.KEYS["Token"],
                         "Token": self._get_token(),
                         "ParentID": -1 if dir_id == 0 else f"{dir_id}",
                         "Limit": FILE_CHILDREN_LIMIT,
@@ -822,7 +817,6 @@ class API:
         
         request = { "operationName": "GetFilesFromPaths",
                     "variables": {
-                        # "Token": self.KEYS["Token"],
                         "Token": self._get_token(),
                         "FileIDPaths": [{
                             "DeviceID": device_id,
@@ -873,7 +867,6 @@ class API:
     
         request = { "operationName": "SetDeleteFile5",
                     "variables": {
-                        # "Token": self.KEYS["Token"],
                         "Token": self._get_token(),
                         "IDs": [{ "FileID": degoo_id }],
                         "IsInRecycleBin": False,
@@ -933,7 +926,6 @@ class API:
         # to provide the checksum.
         request = { "operationName": "SetUploadFile3",
                     "variables": {
-                        # "Token": self.KEYS["Token"],
                         "Token": self._get_token(),
                         "FileInfos": [{
                             "Checksum": checksum,
@@ -999,7 +991,6 @@ class API:
         
         request = { "operationName": "GetBucketWriteAuth4",
                     "variables": {
-                        # "Token": self.KEYS["Token"],
                         "Token": self._get_token(),
                         "ParentID": f"{dir_id}",
                         "StorageUploadInfos":[]
