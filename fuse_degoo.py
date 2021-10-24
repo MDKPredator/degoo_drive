@@ -3,6 +3,7 @@
 import datetime
 import errno
 import faulthandler
+import glob
 import logging
 import mimetypes
 import os
@@ -14,7 +15,6 @@ import time
 from argparse import ArgumentParser
 from collections import defaultdict
 from os import fsencode, fsdecode
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pyfuse3
@@ -41,8 +41,6 @@ PATH_ROOT_DEGOO = '/'
 
 DEGOO_HOSTNAME_EU = 'c.degoo.eu'
 
-http = urllib3.PoolManager(maxsize=10, retries=False, timeout=urllib3.Timeout(connect=5.0, read=10.0))
-
 percentage_read = 25
 
 is_refresh_enabled = True
@@ -59,7 +57,7 @@ requests_control = []
 class Operations(pyfuse3.Operations):
     enable_writeback_cache = True
 
-    def __init__(self, source, cache_size, flood_sleep_time, flood_time_to_check, flood_max_requests):
+    def __init__(self, source, cache_size, flood_sleep_time, flood_time_to_check, flood_max_requests, change_hostname):
         super().__init__()
         self._inode_path_map = {pyfuse3.ROOT_INODE: source}
         self._source = source
@@ -77,6 +75,8 @@ class Operations(pyfuse3.Operations):
         self._flood_time_to_check = flood_time_to_check
         # Maximum number of requests in the period set by the variable "_flood_time_to_check"
         self._flood_max_requests = flood_max_requests
+        # Change hostname sent by Degoo for .eu
+        self._change_hostname = change_hostname
 
     def _set_id_root_degoo(self, id_degoo):
         self._id_root_degoo = id_degoo
@@ -224,7 +224,7 @@ class Operations(pyfuse3.Operations):
         entry.st_uid = os.getuid()
         entry.st_gid = os.getgid()
         entry.st_blksize = 512
-        entry.st_blocks = ((entry.st_size+entry.st_blksize-1) // entry.st_blksize)
+        entry.st_blocks = ((entry.st_size + entry.st_blksize - 1) // entry.st_blksize)
 
         timestamp = int(1438467123.985654)
 
@@ -246,7 +246,7 @@ class Operations(pyfuse3.Operations):
 
     def _getattr(self, path=None, fd=None):
         assert fd is None or path is None
-        assert not(fd is None and path is None)
+        assert not (fd is None and path is None)
         try:
             if fd is None:
                 stat = os.lstat(path)
@@ -264,7 +264,7 @@ class Operations(pyfuse3.Operations):
         entry.entry_timeout = 0
         entry.attr_timeout = 0
         entry.st_blksize = 512
-        entry.st_blocks = ((entry.st_size+entry.st_blksize-1) // entry.st_blksize)
+        entry.st_blocks = ((entry.st_size + entry.st_blksize - 1) // entry.st_blksize)
 
         return entry
 
@@ -414,15 +414,22 @@ class Operations(pyfuse3.Operations):
             if not url:
                 raise pyfuse3.FUSEError(errno.ENOENT)
 
-            http.headers['Range'] = 'bytes=%s-%s' % (offset, offset + length - 1)
             try:
-                response = http.request('GET', url)
-                return response.data
+                response = requests.get(url, headers={
+                    'Range': 'bytes=%s-%s' % (offset, offset + length - 1)
+                })
+                if response.status_code < 400:
+                    return response.content
+                else:
+                    log.debug('Error trying to download file [%s]. Code [%s] Message [%s]', path_file,
+                              str(response.status_code), response.content)
+                    raise pyfuse3.FUSEError(errno.ENOENT)
             except urllib3.exceptions.HTTPError as e:
                 log.debug('Error getting info for file [%s]: %s', path_file, str(e))
-            except requests.exceptions.Timeout as e:
+            except urllib3.exceptions.ReadTimeoutError as e:
                 log.debug('Timeout for file [%s]: %s', path_file, str(e))
         else:
+            degoo_file_size = self._get_degoo_element_by_id(fd)['Size']
             size_to_read = offset + length
 
             first_file_part = offset // self._cache_size
@@ -433,7 +440,7 @@ class Operations(pyfuse3.Operations):
 
             if not os.path.isfile(temp_filename):
                 self._check_requests()
-                self._cache_file(path_file, first_file_part)
+                self._cache_file(path_file, first_file_part, degoo_file_size)
 
             result = size_to_read // self._cache_size
 
@@ -441,15 +448,18 @@ class Operations(pyfuse3.Operations):
 
             # 1 - Check that at least a percentage of the file has been read before downloading the next piece of data
             # 2 - Check that the size to be read is smaller than the size of the file
-            if self._min_size_read_next_part < size_to_read < self._get_degoo_element_by_id(fd)['Size'] \
+            if self._min_size_read_next_part < size_to_read < degoo_file_size \
                     and not cache_thread_running and not os.path.isfile(next_temp_filename):
                 self._check_requests()
 
                 log.debug('Preparing to download next file [%s]', next_temp_filename)
                 cache_thread_running = True
                 caching_file_list.append(next_temp_filename)
-                t1 = threading.Thread(target=self._cache_file, args=(path_file, second_file_part,))
+                t1 = threading.Thread(target=self._cache_file, args=(path_file, second_file_part, degoo_file_size,))
                 t1.start()
+
+            if not os.path.isfile(temp_filename):
+                raise pyfuse3.FUSEError(errno.ENOENT)
 
             file_descriptor = os.open(temp_filename, os.O_RDONLY)
             # If the reading is done from the same file
@@ -519,9 +529,7 @@ class Operations(pyfuse3.Operations):
     async def release(self, fd):
         try:
             element = self._get_degoo_element_by_id(fd)
-            filename = element['FilePath']
-            if '/' in filename:
-                filename = filename[filename.rfind('/') + 1:]
+            filename = self._get_filename(element['FilePath'])
 
             self._clear_files(filename)
 
@@ -561,7 +569,8 @@ class Operations(pyfuse3.Operations):
         last_minute = datetime.datetime.now() - datetime.timedelta(minutes=self._flood_time_to_check)
         requests_control = [x for x in requests_control if x >= last_minute]
         number_of_requests = len(requests_control)
-        log.debug('Number of requests made in %s minute(s): %s', str(self._flood_time_to_check), str(number_of_requests))
+        log.debug('Number of requests made in %s minute(s): %s', str(self._flood_time_to_check),
+                  str(number_of_requests))
         if number_of_requests > self._flood_max_requests:
             log.debug('Reached max of requests %s in %s minutes. Waiting %s seconds',
                       str(self._flood_max_requests), str(self._flood_time_to_check), str(self._flood_sleep_time))
@@ -580,7 +589,7 @@ class Operations(pyfuse3.Operations):
                 is_media_type = True
         return is_media_type
 
-    def _cache_file(self, degoo_path_file, file_part):
+    def _cache_file(self, degoo_path_file, file_part, degoo_file_size):
         global cache_thread_running
         global caching_file_list
 
@@ -591,27 +600,42 @@ class Operations(pyfuse3.Operations):
 
         url_parsed = urlparse(url)
         # It seems to go faster with the .eu domain
-        if url_parsed.hostname != DEGOO_HOSTNAME_EU:
+        if self._change_hostname and url_parsed.hostname != DEGOO_HOSTNAME_EU:
             log.debug('Changing hostname [%s] to [%s]', url_parsed.hostname, DEGOO_HOSTNAME_EU)
             url = url_parsed._replace(netloc=DEGOO_HOSTNAME_EU).geturl()
 
         size = (file_part * self._cache_size) + self._cache_size
 
+        # For end of file, must by "degoo_file_size - (file_part * self._cache_size)", but Degoo returns 416.
+        # With empty size returns from "file_part * self._cache_size" until the end
+        size = size - 1 if size < degoo_file_size else ''
+
         temp_filename = self._get_temp_file(degoo_path_file, file_part)
 
         if not os.path.isfile(temp_filename):
-            log.debug('Downloading [%s] filepart %d-%d', temp_filename, file_part * self._cache_size, size - 1)
-            http.headers['Range'] = 'bytes=%s-%s' % (file_part * self._cache_size, size - 1)
+            log.debug('Downloading [%s] filepart %d-%s', temp_filename, file_part * self._cache_size, str(size))
             try:
-                response = http.request('GET', url)
+                response = requests.get(url, stream=True, headers={
+                    'Range': 'bytes=%s-%s' % (file_part * self._cache_size, size)
+                })
 
-                with open(temp_filename, 'wb') as out:
-                    out.write(response.data)
+                if response.status_code < 400:
+                    if response.status_code == 206:
+                        read_bytes = response.content
+                    else:
+                        log.debug('WARN. File is returned completely by Degoo. Ignoring')
+                        raise pyfuse3.FUSEError(errno.ENOENT)
+
+                    with open(temp_filename, 'wb') as out:
+                        out.write(read_bytes)
 
                     log.debug('Downloaded file [%s]', temp_filename)
+                else:
+                    log.debug('Error trying to download file [%s]. Code [%s] Message [%s]', temp_filename,
+                              str(response.status_code), response.content)
             except requests.exceptions.ConnectionError as e:
                 log.debug('Error getting info for file [%s]: %s', temp_filename, str(e))
-            except requests.exceptions.Timeout as e:
+            except urllib3.exceptions.ReadTimeoutError as e:
                 log.debug('Timeout for file [%s]: %s', temp_filename, str(e))
 
         if temp_filename in caching_file_list:
@@ -621,10 +645,15 @@ class Operations(pyfuse3.Operations):
     def _get_temp_directory(self):
         return tempfile.gettempdir() + os.sep
 
-    def _get_temp_file(self, degoo_path_file, filepart):
+    def _get_filename(self, degoo_path_file):
         filename = degoo_path_file
         if '/' in filename:
             filename = filename[filename.rfind('/') + 1:]
+
+        return filename
+
+    def _get_temp_file(self, degoo_path_file, filepart):
+        filename = self._get_filename(degoo_path_file)
         name = filename[:filename.rfind('.')]
         extension = filename[filename.rfind('.') + 1:]
         temp_filename = name + '_' + str(filepart) + '.' + extension
@@ -632,8 +661,7 @@ class Operations(pyfuse3.Operations):
         return self._get_temp_directory() + temp_filename
 
     def _clear_files(self, filename, skip_filename=None):
-        if '/' in filename:
-            filename = filename[filename.rfind('/') + 1:]
+        filename = self._get_filename(filename)
 
         if '.' in filename:
             filename = filename[:filename.rfind('.')]
@@ -641,10 +669,11 @@ class Operations(pyfuse3.Operations):
         if skip_filename and '/' in skip_filename:
             skip_filename = skip_filename[skip_filename.rfind('/') + 1:]
 
-        for p in Path(self._get_temp_directory()).glob(filename + "*"):
-            if p.name != skip_filename:
-                log.debug('Removing part %s', p.name)
-                p.unlink()
+        filename = glob.escape(filename)
+        for file in glob.glob(self._get_temp_directory() + filename + "*", recursive=False):
+            if file != skip_filename:
+                log.debug('Removing part %s', file)
+                os.remove(file)
 
     def _refresh_path(self):
         for idx, degoo_element in degoo_tree_content.items():
@@ -724,6 +753,8 @@ def parse_args(args):
                         help='Maximum number of requests in the period')
     parser.add_argument('--flood-time-to-check', action='store_true', default=1,
                         help='Request control period, in minutes')
+    parser.add_argument('--change-hostname', action='store_true', default=False,
+                        help='Disable change domain for media files')
 
     return parser.parse_args(args)
 
@@ -736,6 +767,7 @@ def main():
     degoo_path = options.degoo_path
     refresh_interval = options.refresh_interval * 60
     disable_refresh = options.disable_refresh
+    change_hostname = options.change_hostname
 
     log.debug('##### Initializating Degoo drive #####')
     log.debug('Cache size:          %s', str(cache_size) + ' kb')
@@ -744,12 +776,14 @@ def main():
     log.debug('Flood sleep time:    %s seconds', str(options.flood_sleep_time))
     log.debug('Flood max requests:  %s', str(options.flood_max_requests))
     log.debug('Flood time check:    %s minute(s)', str(options.flood_time_to_check))
+    log.debug('Change hostname:     %s', 'Disabled' if not change_hostname else DEGOO_HOSTNAME_EU)
 
     if options.allow_other:
         log.debug('User access:         %s', options.allow_other)
 
     operations = Operations(source=degoo_path, cache_size=cache_size, flood_sleep_time=options.flood_sleep_time,
-                            flood_time_to_check=options.flood_time_to_check, flood_max_requests=options.flood_max_requests)
+                            flood_time_to_check=options.flood_time_to_check,
+                            flood_max_requests=options.flood_max_requests, change_hostname=change_hostname)
 
     log.debug('Reading Degoo content from directory %s', degoo_path)
     operations.load_degoo_content()
@@ -775,6 +809,7 @@ def main():
         log.debug('Entering main loop..')
         trio.run(pyfuse3.main)
     except:
+        print('Unexpected error: ', sys.exc_info()[0])
         global is_refresh_enabled
         is_refresh_enabled = False
         pyfuse3.close(unmount=True)

@@ -44,13 +44,13 @@ Edit file **credentials.json** to enter your credentials (email and password)
 
 ## Basic usage
 
-First you must clone this project with ``git clone``. You can then mount your unit by running the command ``python3 fuse_degoo.py /path/to/mount``
+First you must clone this project with ``git clone https://github.com/MDKPredator/degoo_drive``. You can then mount your unit by running the command ``python3 fuse_degoo.py /path/to/mount``
 
 ## Options
 
 The following options are available:
 
-* ``--degoo-path`` Degoo base path to mount the drive. Default is the root '/'
+* ``--degoo-path`` Degoo base path to mount the drive. Default is root '/'
 * ``--cache-size`` Cache size of downloaded files. Only applies to media files
 * ``--debug`` Displays logs
 * ``--debug-fuse`` Displays the filesystem logs
@@ -60,12 +60,13 @@ The following options are available:
 * ``--flood-sleep-time`` Waiting time, in seconds, before resuming requests once the maximum has been reached
 * ``--flood-max-requests`` Maximum number of requests in the period
 * ``--flood-time-to-check`` Request control period, in minutes
+* ``--change-hostname`` Disable change domain for media files. Default is **false**
 
 ## Docker
 
 This project includes a **Dockerfile** to mount the virtual drive. You will only need to modify the **credentials.json** file before creating the image:
 
-1. Clone this repository
+1. Clone this repository: ``git clone https://github.com/MDKPredator/degoo_drive``
 2. Modify ``degoo_config/credentials.json``
 3. Create the image ``docker build -t degoo_drive .``
 4. Run container ``docker run -dit --privileged --name degoo degoo_drive``
