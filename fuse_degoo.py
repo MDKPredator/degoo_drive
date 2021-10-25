@@ -671,7 +671,7 @@ class Operations(pyfuse3.Operations):
 
         filename = glob.escape(filename)
         for file in glob.glob(self._get_temp_directory() + filename + "*", recursive=False):
-            if file != skip_filename:
+            if self._get_filename(file) != skip_filename:
                 log.debug('Removing part %s', file)
                 os.remove(file)
 
