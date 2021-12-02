@@ -270,7 +270,7 @@ def login():
         if response.ok:
             rd = json.loads(response.text)
             
-            keys = {"Token": rd["Token"], "x-api-key": api.API_KEY}
+            keys = {"Token": rd["Token"], "RefreshToken": rd["RefreshToken"], "x-api-key": api.API_KEY}
         
             with open(keys_file, "w") as file:
                 file.write(json.dumps(keys))
@@ -431,11 +431,17 @@ class API:
         return (c_dt, m_dt, u_dt)        
     
     def _get_token(self):
-        deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False})
-        expired_time = deserialized['exp']
+        expired_time = 0
+        if self.KEYS["Token"] and self.KEYS["RefreshToken"]:
+            deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False})
+            expired_time = deserialized['exp']
+        else:
+            print('Token and/or refresh token does not found. Login with Degoo')
+            login()
+
         if datetime.datetime.today().timestamp() > expired_time:
             print('Token expired. Refreshing')
-            data = {'refreshtoken': 'wC6WZg..-YzEVhozCasL4kA0E9-eUWk5SSmJFneOtP1nQUbOIU61ARMC2hrxOASlWejZ2ErY40lTwkWgyiBB8A'}
+            data = {'refreshtoken': self.KEYS["RefreshToken"]}
             response = requests.post(URL_ACCESS_TOKEN, data=json.dumps(data))
 
             if response.ok:
@@ -1951,7 +1957,7 @@ def ls(directory=None, long=False, recursive=False):
                 ls(i['ID'], long, recursive)
         
 
-def tree(dir_id=0, show_times=False,_done=[], show_tree=False):
+def tree(dir_id=0, show_times=False, _done=[], show_tree=False, mode='lazy'):
     T = "├── "
     I = "│   "
     L = "└── "
@@ -1984,7 +1990,7 @@ def tree(dir_id=0, show_times=False,_done=[], show_tree=False):
             if show_tree:
                 print(prefix + name + postfix)
             
-            if cat in api.folder_types:
+            if cat in api.folder_types and mode == 'eager':
                 new_done = _done.copy()
                 new_done.append(ID == last_id)
                 tree(ID, show_times, new_done)
@@ -1994,7 +2000,7 @@ def get_cached_items():
     return __CACHE_ITEMS__
 
 
-def tree_cache(dir_id=0, show_times=False, _done=[]):
+def tree_cache(dir_id=0, show_times=False, _done=[], mode='lazy'):
     global __CACHE_CONTENTS__
     global __CACHE_ITEMS__
 
@@ -2008,7 +2014,7 @@ def tree_cache(dir_id=0, show_times=False, _done=[]):
     }
     __CACHE_CONTENTS__ = {}
     __CACHE_ITEMS__ = {0: root_path, 1: root_path}
-    tree(dir_id, show_times, _done)
+    tree(dir_id, show_times, _done, mode)
     return __CACHE_ITEMS__
 
 

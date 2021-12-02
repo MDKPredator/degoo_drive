@@ -57,7 +57,8 @@ requests_control = []
 class Operations(pyfuse3.Operations):
     enable_writeback_cache = True
 
-    def __init__(self, source, cache_size, flood_sleep_time, flood_time_to_check, flood_max_requests, change_hostname):
+    def __init__(self, source, cache_size, flood_sleep_time, flood_time_to_check, flood_max_requests,
+                 enable_flood_control, change_hostname, mode):
         super().__init__()
         self._inode_path_map = {pyfuse3.ROOT_INODE: source}
         self._source = source
@@ -75,8 +76,11 @@ class Operations(pyfuse3.Operations):
         self._flood_time_to_check = flood_time_to_check
         # Maximum number of requests in the period set by the variable "_flood_time_to_check"
         self._flood_max_requests = flood_max_requests
+        # Disable flood control
+        self._enable_flood_control = enable_flood_control
         # Change hostname sent by Degoo for .eu
         self._change_hostname = change_hostname
+        self._mode = mode
 
     def _set_id_root_degoo(self, id_degoo):
         self._id_root_degoo = id_degoo
@@ -274,6 +278,14 @@ class Operations(pyfuse3.Operations):
 
         parent_id = self._get_degoo_id(path)
         children = self._get_degoo_childs(parent_id)
+
+        # If dir has not children and it is lazy mode, degoo it is called to get the content
+        if len(children) == 0 and self._mode == 'lazy':
+            global degoo_tree_content
+            degoo.tree(dir_id=inode, mode=self._mode)
+            self._refresh_path()
+            children = self._get_degoo_childs(parent_id)
+
         entries = []
         for element in children:
             attr = self._get_degoo_attrs(element['FilePath'])
@@ -559,9 +571,10 @@ class Operations(pyfuse3.Operations):
         os.remove(source_file)
 
     def _check_requests(self):
-        global requests_control
-        requests_control.append(datetime.datetime.now())
-        self._control_requests_flood()
+        if self._enable_flood_control:
+            global requests_control
+            requests_control.append(datetime.datetime.now())
+            self._control_requests_flood()
 
     def _control_requests_flood(self):
         global requests_control
@@ -645,8 +658,8 @@ class Operations(pyfuse3.Operations):
     def _get_temp_directory(self):
         return tempfile.gettempdir() + os.sep
 
-    def _get_filename(self, degoo_path_file):
-        filename = degoo_path_file
+    def _get_filename(self, path_file):
+        filename = path_file
         if '/' in filename:
             filename = filename[filename.rfind('/') + 1:]
 
@@ -701,7 +714,7 @@ class Operations(pyfuse3.Operations):
         threadLock.acquire()
 
         global degoo_tree_content
-        degoo_tree_content = degoo.tree_cache()
+        degoo_tree_content = degoo.tree_cache(mode=self._mode)
 
         id_root_degoo = self._get_degoo_id(self._source)
         self._set_id_root_degoo(id_root_degoo)
@@ -753,8 +766,12 @@ def parse_args(args):
                         help='Maximum number of requests in the period')
     parser.add_argument('--flood-time-to-check', action='store_true', default=1,
                         help='Request control period, in minutes')
+    parser.add_argument('--enable-flood-control', action='store_true', default=False,
+                        help='Disable flood control')
     parser.add_argument('--change-hostname', action='store_true', default=False,
                         help='Disable change domain for media files')
+    parser.add_argument('--mode', type=str, default='lazy',
+                        help='How content is read. Default is lazy')
 
     return parser.parse_args(args)
 
@@ -767,23 +784,29 @@ def main():
     degoo_path = options.degoo_path
     refresh_interval = options.refresh_interval * 60
     disable_refresh = options.disable_refresh
+    enable_flood_control = options.enable_flood_control
     change_hostname = options.change_hostname
+    mode = options.mode
 
     log.debug('##### Initializating Degoo drive #####')
     log.debug('Cache size:          %s', str(cache_size) + ' kb')
     log.debug('Root Degoo path:     %s', degoo_path)
     log.debug('Refresh interval:    %s', 'Disabled' if disable_refresh else str(refresh_interval) + ' seconds')
-    log.debug('Flood sleep time:    %s seconds', str(options.flood_sleep_time))
-    log.debug('Flood max requests:  %s', str(options.flood_max_requests))
-    log.debug('Flood time check:    %s minute(s)', str(options.flood_time_to_check))
+    log.debug('Flood control:       %s', 'Enabled' if enable_flood_control else 'Disabled')
+    if enable_flood_control:
+        log.debug('Flood sleep time:    %s seconds', str(options.flood_sleep_time))
+        log.debug('Flood max requests:  %s', str(options.flood_max_requests))
+        log.debug('Flood time check:    %s minute(s)', str(options.flood_time_to_check))
     log.debug('Change hostname:     %s', 'Disabled' if not change_hostname else DEGOO_HOSTNAME_EU)
+    log.debug('Mode:                %s', mode)
 
     if options.allow_other:
         log.debug('User access:         %s', options.allow_other)
 
     operations = Operations(source=degoo_path, cache_size=cache_size, flood_sleep_time=options.flood_sleep_time,
                             flood_time_to_check=options.flood_time_to_check,
-                            flood_max_requests=options.flood_max_requests, change_hostname=change_hostname)
+                            flood_max_requests=options.flood_max_requests, enable_flood_control=enable_flood_control,
+                            change_hostname=change_hostname, mode=mode)
 
     log.debug('Reading Degoo content from directory %s', degoo_path)
     operations.load_degoo_content()

@@ -61,6 +61,7 @@ The following options are available:
 * ``--flood-max-requests`` Maximum number of requests in the period
 * ``--flood-time-to-check`` Request control period, in minutes
 * ``--change-hostname`` Disable change domain for media files. Default is **false**
+* ``--mode`` How to read the content. **Lazy** (default) reads as browsing (recommended for large content). **Eager** to read all content the first time
 
 ## Docker
 
