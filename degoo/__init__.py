@@ -704,7 +704,7 @@ class API:
         else:
             raise DegooError(f"getOverlay3 failed with: {response.text}")
     
-    def getFileChildren3(self, dir_id, next_token = None):
+    def getFileChildren3(self, dir_id, next_token=None):
         '''
         A Degoo Graph API call: gets the contents of a Degoo directory (the children of a Degoo item that is a Folder)
         
@@ -1140,7 +1140,9 @@ def rename(path_file_folder, new_name):
     else:
         raise DegooError(f"rm: Illegal file: {path_file_folder}")
 
-    return api.rename_file(file_id, new_name)
+    result = api.rename_file(file_id, new_name)
+    update_item(file_id)
+    return result
 
 
 def mv(path_file_folder, new_path):
@@ -1173,7 +1175,9 @@ def mv(path_file_folder, new_path):
     else:
         raise DegooError(f"rm: Illegal destination folder: {new_path}")
 
-    return api.mv(file_id, new_parent_id)
+    result = api.mv(file_id, new_parent_id)
+    update_item(file_id)
+    return result
 
 
 def rm(file):
@@ -1194,7 +1198,10 @@ def rm(file):
         raise DegooError(f"rm: Illegal file: {file}")
 
     path = api.getOverlay3(file_id)["FilePath"]
-    response = api.setDeleteFile5(file_id)  # @UnusedVariable
+    api.setDeleteFile5(file_id)
+
+    if file_id in __CACHE_ITEMS__:
+        del __CACHE_ITEMS__[file_id]
 
     return path
 
@@ -1506,7 +1513,12 @@ def get_file(remote_file, local_directory=None, verbose=0, if_missing=False, dry
     # to the approproate downloader.
     if item["CategoryName"] in api.folder_types:
         return get_directory(remote_file)
-    
+
+    # Small text files has content directly
+    data = item.get('Data', None)
+    if data:
+        return base64.b64decode(data)
+
     # Try the Optimized URL first I guess
     URL = item.get("OptimizedURL", None)
     if not URL:
@@ -1993,7 +2005,7 @@ def tree(dir_id=0, show_times=False, _done=[], show_tree=False, mode='lazy'):
             if cat in api.folder_types and mode == 'eager':
                 new_done = _done.copy()
                 new_done.append(ID == last_id)
-                tree(ID, show_times, new_done)
+                tree(ID, show_times, new_done, mode=mode)
 
 
 def get_cached_items():
@@ -2014,12 +2026,18 @@ def tree_cache(dir_id=0, show_times=False, _done=[], mode='lazy'):
     }
     __CACHE_CONTENTS__ = {}
     __CACHE_ITEMS__ = {0: root_path, 1: root_path}
-    tree(dir_id, show_times, _done, mode)
+    tree(dir_id, show_times, _done, mode=mode)
     return __CACHE_ITEMS__
 
 
 def get_url_file(remote_file):
     return get_file(remote_file, onlyUrl=True)
+
+
+def update_item(file_id):
+    item = api.getOverlay3(file_id)
+    item['isFolder'] = item.get("CategoryName") in api.folder_types
+    __CACHE_ITEMS__[file_id] = item
 
 
 def create_callback(encoder):

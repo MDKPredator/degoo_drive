@@ -280,8 +280,7 @@ class Operations(pyfuse3.Operations):
         children = self._get_degoo_childs(parent_id)
 
         # If dir has not children and it is lazy mode, degoo it is called to get the content
-        if len(children) == 0 and self._mode == 'lazy':
-            global degoo_tree_content
+        if self._mode == 'lazy' and len(children) == 0:
             degoo.tree(dir_id=inode, mode=self._mode)
             self._refresh_path()
             children = self._get_degoo_childs(parent_id)
@@ -333,8 +332,6 @@ class Operations(pyfuse3.Operations):
         else:
             del self._inode_path_map[inode]
 
-        self.load_degoo_content()
-
     async def rename(self, inode_p_old, name_old, inode_p_new, name_new,
                      flags, ctx):
         if flags != 0:
@@ -348,6 +345,10 @@ class Operations(pyfuse3.Operations):
 
         inode = self._get_degoo_id(path_old)
 
+        if self._mode == 'lazy' and len(self._get_degoo_childs(inode_p_new)) == 0:
+            degoo.tree(dir_id=inode_p_new, mode=self._mode)
+            self._refresh_path()
+
         # It is a rename
         if inode_p_old == inode_p_new:
             degoo.rename(path_old, name_new)
@@ -355,7 +356,6 @@ class Operations(pyfuse3.Operations):
             # If name it is different, it is a move with rename
             if name_old != name_new:
                 degoo.rename(path_old, name_new)
-                self.load_degoo_content()
                 path_old = path + '/' + name_new
             path = self._inode_to_path(inode_p_new, fullpath=True)
             degoo.mv(path_old, path)
@@ -370,8 +370,6 @@ class Operations(pyfuse3.Operations):
         else:
             del self._inode_path_map[inode]
             self._inode_path_map[inode] = path_new
-
-        self.load_degoo_content()
 
     async def mkdir(self, inode_p, name, mode, ctx):
         name = fsdecode(name)
@@ -425,6 +423,10 @@ class Operations(pyfuse3.Operations):
 
             if not url:
                 raise pyfuse3.FUSEError(errno.ENOENT)
+
+            if isinstance(url, bytes):
+                # If are bytes, then it is the content of the file
+                return url
 
             try:
                 response = requests.get(url, headers={
