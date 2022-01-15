@@ -17,6 +17,7 @@ those communications aand a Python client implementation.
 @contact:    YndlY2huZXJAeWFob28uY29t    (base64 encoded)
 @deffield    updated: Updated
 '''
+import argparse
 import base64
 import datetime
 import hashlib
@@ -30,6 +31,7 @@ import sys
 import time
 import wget
 import jwt
+from os import getenv
 from shutil import copyfile
 from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from clint.textui.progress import Bar as ProgressBar
@@ -86,8 +88,41 @@ URL_ACCESS_TOKEN = "https://rest-api.degoo.com/access-token"
 # Get the path to user configuration diectory for this app
 conf_dir = user_config_dir("degoo")
 
+DEGOO_USERNAME = getenv("DEGOO_USERNAME")
+DEGOO_PASSWORD = getenv("DEGOO_PASSWORD")
+DEGOO_REFRESH_TOKEN = getenv("DEGOO_REFRESH_TOKEN")
+
+argparser = argparse.ArgumentParser(
+    description="Script to access to deego storage"
+)
+argparser.add_argument(
+    "--username",
+    required=DEGOO_USERNAME == None,
+    type=str,
+    default=DEGOO_USERNAME,
+    help="Degoo username/email",
+)
+argparser.add_argument(
+    "--password",
+    required=DEGOO_PASSWORD == None,
+    type=str,
+    default=DEGOO_PASSWORD,
+    help="Degoo password",
+)
+argparser.add_argument(
+    "--refresh_token",
+    type=str,
+    default=DEGOO_REFRESH_TOKEN,
+    help="Degoo refresh token",
+)
+
+args = argparser.parse_args()
+
+deego_username = args.username
+deego_password = args.password
+degoo_refresh_token = args.refresh_token
+
 # Local config and state files
-cred_file  = os.path.join(conf_dir, "credentials.json")
 cwd_file   = os.path.join(conf_dir, "cwd.json")
 keys_file  = os.path.join(conf_dir, "keys.json")
 DP_file    = os.path.join(conf_dir, "default_properties.txt")
@@ -231,7 +266,7 @@ else:
 
 ###########################################################################
 # Logging in is a prerequisite to using the API (a pre API step). The 
-# login function reads from the configure cred_file and writes keys the
+# login function reads from the configure credentials and writes keys the
 # API needs to the keys_file.
 
 def login():
@@ -242,8 +277,7 @@ def login():
     
     This function leans on:
     
-    Degoo account credentials stored in a file `cred_file` 
-    (by default ~/.config/degoo/credentials.json) This file shoud contain
+    Degoo account credentials shoud contain
     a JSON dict with elements Username and Password akin to:
         {"Username":"username","Password":"password"}
     This file should be secure readable by the user concerned, as it affords
@@ -259,17 +293,30 @@ def login():
     
     :returns: True if successful, false if not
     '''
-    CREDS = {}
-    if os.path.isfile(cred_file):
-        with open(cred_file, "r") as file:
-            CREDS = json.loads(file.read())
-    
+    CREDS = '{"Username": deego_username, "Password": deego_password, "GenerateToken": true}'
+    headers = {
+        'accept': '*/*',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en-GB,en;q=0.9,it-IT;q=0.8,it;q=0.7,en-US;q=0.6',
+        'content-length': '81',
+        'content-type': 'application/json',
+        'origin': 'https://app.degoo.com',
+        'referer': 'https://app.degoo.com/',
+        'sec-ch-ua': '" Not A;Brand";v="99", "Chromium";v="96", "Google Chrome";v="96"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"macOS"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
     if CREDS:
-        response = requests.post(URL_login, data=json.dumps(CREDS))
-        
+        response = requests.post(URL_login, headers=headers, data=CREDS)
+        response.raise_for_status()
         if response.ok:
             rd = json.loads(response.text)
-            
             keys = {"Token": rd["Token"], "RefreshToken": rd["RefreshToken"], "x-api-key": api.API_KEY}
         
             with open(keys_file, "w") as file:
@@ -435,13 +482,15 @@ class API:
         if self.KEYS["Token"] and self.KEYS["RefreshToken"]:
             deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False})
             expired_time = deserialized['exp']
-        else:
+        elif degoo_refresh_token == "":
             print('Token and/or refresh token does not found. Login with Degoo')
             login()
 
         if datetime.datetime.today().timestamp() > expired_time:
             print('Token expired. Refreshing')
-            data = {'refreshtoken': self.KEYS["RefreshToken"]}
+            refresh_token = self.KEYS["RefreshToken"] or degoo_refresh_token
+            data = {'refreshtoken': refresh_token}
+            print(data)
             response = requests.post(URL_ACCESS_TOKEN, data=json.dumps(data))
 
             if response.ok:

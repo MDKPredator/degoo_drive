@@ -1,0 +1,16 @@
+version: '3.9'
+
+services:
+  degoo-drive:
+    container_name: deego-drive
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true # needed for fuse
+    environment:
+      DEGOO_USERNAME: "YOUR_USERNAME"
+      DEGOO_PASSWORD: "YOUR_PASSWORD"
+      DEGOO_REFRESH_TOKEN: "YOUR_REFRESH_TOKEN" # it's optional if you have login issue
+    volumes:
+       - ~/path_where_you_want_to_put_synched_files:/home/degoo
+    restart: unless-stopped

@@ -39,6 +39,8 @@ degoo_tree_content = {}
 
 PATH_ROOT_DEGOO = '/'
 
+PATH_HOME_DEGOO = '/home/degoo/'
+
 DEGOO_HOSTNAME_EU = 'c.degoo.eu'
 
 percentage_read = 25
@@ -746,25 +748,25 @@ def parse_args(args):
 
     parser = ArgumentParser()
 
-    parser.add_argument('mountpoint', type=str,
-                        help='Where to mount the file system')
+    parser.add_argument('--mountpoint', type=str, default=PATH_HOME_DEGOO,
+                        help='Where to mount the file system. Default is ' + PATH_HOME_DEGOO)
     parser.add_argument('--degoo-path', type=str, default=PATH_ROOT_DEGOO,
                         help='Absolute path from Degoo. Default is ' + PATH_ROOT_DEGOO)
     parser.add_argument('--cache-size', type=int, default=15,
                         help='Size of downloaded piece of media files')
-    parser.add_argument('--debug', action='store_true', default=False,
+    parser.add_argument('--debug', action='store_true', default=True,
                         help='Enable debugging output')
-    parser.add_argument('--debug-fuse', action='store_true', default=False,
+    parser.add_argument('--debug-fuse', action='store_true', default=True,
                         help='Enable FUSE debugging output')
-    parser.add_argument('--allow-other', action='store_true',
+    parser.add_argument('--allow-other', action='store_true', default=True,
                         help='Allow access to another users')
-    parser.add_argument('--refresh-interval', type=int, default=10,
-                        help='Allow access to another users')
+    parser.add_argument('--refresh-interval', type=int, default=15,
+                        help='Refresh deego content interval (default: 1 * 60sec')
     parser.add_argument('--disable-refresh', action='store_true', default=False,
                         help='Disable automatic refresh')
-    parser.add_argument('--flood-sleep-time', action='store_true', default=60,
+    parser.add_argument('--flood-sleep-time', action='store_true', default=1000,
                         help='Waiting time, in seconds, before resuming requests once the maximum has been reached')
-    parser.add_argument('--flood-max-requests', action='store_true', default=20,
+    parser.add_argument('--flood-max-requests', action='store_true', default=1,
                         help='Maximum number of requests in the period')
     parser.add_argument('--flood-time-to-check', action='store_true', default=1,
                         help='Request control period, in minutes')
@@ -782,6 +784,7 @@ def main():
     options = parse_args(sys.argv[1:])
     init_logging(options.debug)
 
+    mountpoint = options.mountpoint
     cache_size = options.cache_size * 1024 * 1024
     degoo_path = options.degoo_path
     refresh_interval = options.refresh_interval * 60
@@ -793,6 +796,7 @@ def main():
     log.debug('##### Initializating Degoo drive #####')
     log.debug('Cache size:          %s', str(cache_size) + ' kb')
     log.debug('Root Degoo path:     %s', degoo_path)
+    log.debug('Home mountpoint:     %s', mountpoint)
     log.debug('Refresh interval:    %s', 'Disabled' if disable_refresh else str(refresh_interval) + ' seconds')
     log.debug('Flood control:       %s', 'Enabled' if enable_flood_control else 'Disabled')
     if enable_flood_control:
@@ -824,7 +828,7 @@ def main():
     if options.debug_fuse:
         fuse_options.add('debug')
 
-    pyfuse3.init(operations, options.mountpoint, fuse_options)
+    pyfuse3.init(operations, mountpoint, fuse_options)
 
     if not disable_refresh:
         t1 = threading.Thread(target=operations.refresh_degoo_content, args=(refresh_interval,))

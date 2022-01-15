@@ -72,6 +72,31 @@ This project includes a **Dockerfile** to mount the virtual drive. You will only
 3. Create the image ``docker build -t degoo_drive .``
 4. Run container ``docker run -dit --privileged --name degoo degoo_drive``
 
+## Docker-compose
+
+This project includes a **docker-compose.yml** to mount the virtual drive. You will only need to modify environments before run command:
+
+````shell
+version: '3.9'
+
+services:
+  degoo-drive:
+    container_name: deego-drive
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true # needed for fuse
+    environment:
+      DEGOO_USERNAME: "YOUR_USERNAME"
+      DEGOO_PASSWORD: "YOUR_PASSWORD"
+      DEGOO_REFRESH_TOKEN: "YOUR_REFRESH_TOKEN" # it's optional if you have login issue
+    volumes:
+       - ~/path_where_you_want_to_put_synched_files:/home/degoo
+    restart: unless-stopped
+    ````
+
+
+
 ## Degoo Drive and Plex
 
 You can also mount the virtual drive to use plex in a docker container. You will need the latest versions of plex which you can find [here](https://hub.docker.com/r/linuxserver/plex/tags). They should be at least the __bionic__ versions that include the **libfuse3-dev** and **fuse3** libraries, or higher. You can follow the steps below to do so: 

@@ -1,4 +1,4 @@
-FROM python:3.8
+FROM python:3.10
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
@@ -16,9 +16,8 @@ COPY setup.py degoo_drive
 COPY degoo/__init__.py degoo_drive/degoo
 COPY src degoo_drive/src
 
-COPY degoo_config/credentials.json /root/.config/degoo/
 COPY degoo_config/default_properties.txt /root/.config/degoo/
 COPY degoo_config/keys.json /root/.config/degoo/
 COPY degoo_config/schedule.json /root/.config/degoo/
 
-CMD ["python3.8", "/degoo_drive/fuse_degoo.py", "/home/degoo/"]
+ENTRYPOINT ["python3.8", "/degoo_drive/fuse_degoo.py"]
