@@ -7,9 +7,9 @@ RUN apt-get update \
 
 RUN python -m pip install appdirs wget python-magic humanize humanfriendly python-dateutil requests clint requests_toolbelt pyfuse3 PyJWT
 
-RUN mkdir -p degoo_drive/degoo
-RUN mkdir -p /root/.config/degoo/
-RUN mkdir -p /home/degoo
+RUN mkdir -p degoo_drive/degoo \
+    && mkdir -p /root/.config/degoo/ \
+    && mkdir -p /home/degoo
 
 COPY fuse_degoo.py degoo_drive
 COPY setup.py degoo_drive
@@ -21,4 +21,4 @@ COPY degoo_config/default_properties.txt /root/.config/degoo/
 COPY degoo_config/keys.json /root/.config/degoo/
 COPY degoo_config/schedule.json /root/.config/degoo/
 
-CMD ["python3.8", "/degoo_drive/fuse_degoo.py", "/home/degoo/"]
+ENTRYPOINT ["python3.8", "/degoo_drive/fuse_degoo.py"]

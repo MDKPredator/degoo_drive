@@ -16,6 +16,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from os import fsencode, fsdecode
 from urllib.parse import urlparse
+from pathlib import Path
 
 import pyfuse3
 import requests
@@ -36,6 +37,8 @@ faulthandler.enable()
 log = logging.getLogger(__name__)
 
 degoo_tree_content = {}
+
+LOCAL_PATH_DEGOO = '/home/degoo'
 
 PATH_ROOT_DEGOO = '/'
 
@@ -746,8 +749,16 @@ def parse_args(args):
 
     parser = ArgumentParser()
 
-    parser.add_argument('mountpoint', type=str,
-                        help='Where to mount the file system')
+    parser.add_argument('--mountpoint', type=str, default=LOCAL_PATH_DEGOO,
+                        help='Where to mount the file system. Default is ' + LOCAL_PATH_DEGOO)
+    parser.add_argument('--degoo-email', type=str,
+                        help='Email to login in Degoo')
+    parser.add_argument('--degoo-pass', type=str,
+                        help='Password to login in Degoo')
+    parser.add_argument('--degoo-token', type=str,
+                        help='Token for requests. Alternative if login fails')
+    parser.add_argument('--degoo-refresh-token', type=str,
+                        help='Used when token expires. Alternative if login fails')
     parser.add_argument('--degoo-path', type=str, default=PATH_ROOT_DEGOO,
                         help='Absolute path from Degoo. Default is ' + PATH_ROOT_DEGOO)
     parser.add_argument('--cache-size', type=int, default=15,
@@ -774,6 +785,9 @@ def parse_args(args):
                         help='Disable change domain for media files')
     parser.add_argument('--mode', type=str, default='lazy',
                         help='How content is read. Default is lazy')
+    parser.add_argument('--config-path', type=str,
+                        help='Path to the configuration files. Default is ~/.config/degoo/ (useful for setting up '
+                             'multiple accounts at the same time, for example)')
 
     return parser.parse_args(args)
 
@@ -783,15 +797,27 @@ def main():
     init_logging(options.debug)
 
     cache_size = options.cache_size * 1024 * 1024
+    degoo_email = options.degoo_email
+    degoo_pass = options.degoo_pass
+    degoo_token = options.degoo_token
+    degoo_refresh_token = options.degoo_refresh_token
     degoo_path = options.degoo_path
     refresh_interval = options.refresh_interval * 60
     disable_refresh = options.disable_refresh
     enable_flood_control = options.enable_flood_control
     change_hostname = options.change_hostname
     mode = options.mode
+    config_path = options.config_path
 
     log.debug('##### Initializating Degoo drive #####')
+    log.debug('Local mount point:   %s', options.mountpoint)
     log.debug('Cache size:          %s', str(cache_size) + ' kb')
+    if degoo_email and degoo_pass:
+        log.debug('Degoo email:         %s', degoo_email)
+        log.debug('Degoo pass:          %s', '*'*len(degoo_pass))
+    if degoo_token and degoo_refresh_token:
+        log.debug('Degoo token:         %s', '*'*len(degoo_token[:10]))
+        log.debug('Degoo refresh token: %s', '*'*len(degoo_refresh_token[:10]))
     log.debug('Root Degoo path:     %s', degoo_path)
     log.debug('Refresh interval:    %s', 'Disabled' if disable_refresh else str(refresh_interval) + ' seconds')
     log.debug('Flood control:       %s', 'Enabled' if enable_flood_control else 'Disabled')
@@ -801,9 +827,13 @@ def main():
         log.debug('Flood time check:    %s minute(s)', str(options.flood_time_to_check))
     log.debug('Change hostname:     %s', 'Disabled' if not change_hostname else DEGOO_HOSTNAME_EU)
     log.debug('Mode:                %s', mode)
+    if config_path:
+        log.debug('Configuration path:  %s', config_path)
 
     if options.allow_other:
         log.debug('User access:         %s', options.allow_other)
+
+    Path(options.mountpoint).mkdir(parents=True, exist_ok=True)
 
     operations = Operations(source=degoo_path, cache_size=cache_size, flood_sleep_time=options.flood_sleep_time,
                             flood_time_to_check=options.flood_time_to_check,
@@ -811,6 +841,10 @@ def main():
                             change_hostname=change_hostname, mode=mode)
 
     log.debug('Reading Degoo content from directory %s', degoo_path)
+
+    degoo.DegooConfig(config_path, email=degoo_email, password=degoo_pass,
+                      token=degoo_token, refresh_token=degoo_refresh_token)
+    degoo.API()
     operations.load_degoo_content()
 
     log.debug('Mounting...')

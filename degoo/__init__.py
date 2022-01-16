@@ -20,22 +20,22 @@ those communications aand a Python client implementation.
 import base64
 import datetime
 import hashlib
-import humanfriendly
-import humanize
 import json
 import mimetypes
 import os
-import requests
 import sys
 import time
-import wget
-import jwt
 from shutil import copyfile
-from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
-from clint.textui.progress import Bar as ProgressBar
 
+import humanfriendly
+import humanize
+import jwt
+import requests
+import wget
 from appdirs import user_config_dir
+from clint.textui.progress import Bar as ProgressBar
 from dateutil import parser, tz
+from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 
 
 class upload_in_chunks(object):
@@ -60,6 +60,7 @@ class upload_in_chunks(object):
     def __len__(self):
         return self.totalsize
 
+
 # An Error class for Degoo functions to raise if need be
 class DegooError(Exception):
     '''Generic exception to raise and log different fatal errors.'''
@@ -71,6 +72,42 @@ class DegooError(Exception):
     def __unicode__(self):
         return self.msg
 
+
+class DegooConfig:
+    def __init__(self, config_dir=None, email=None, password=None, token=None, refresh_token=None):
+        # Get the path to user configuration diectory for this app
+        if config_dir is None:
+            config_dir = user_config_dir("degoo")
+
+        # Local config and state files
+        global cred_file
+        cred_file = os.path.join(config_dir, "credentials.json")
+        if email and password:
+            with open(cred_file, "w") as file:
+                file.write(json.dumps({"Username": email, "Password": password}))
+
+        global cwd_file
+        cwd_file = os.path.join(config_dir, "cwd.json")
+
+        global keys_file
+        keys_file = os.path.join(config_dir, "keys.json")
+        if token and refresh_token:
+            with open(keys_file, "r") as jsonFile:
+                data = json.load(jsonFile)
+
+            data['Token'] = token
+            data['RefreshToken'] = refresh_token
+
+            with open(keys_file, "w") as jsonFile:
+                json.dump(data, jsonFile)
+
+        global DP_file
+        DP_file = os.path.join(config_dir, "default_properties.txt")
+
+        # Ensure the user configuration directory exists
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir)
+
 # URLS
 
 # A string to prefix CLI commands with (configurable, and used by 
@@ -79,7 +116,7 @@ class DegooError(Exception):
 command_prefix = "degoo_"
 
 # The URLS that the Degoo API relies upon
-URL_login = "https://rest-api.degoo.com/login"
+URL_LOGIN = "https://rest-api.degoo.com/login"
 URL_API = "https://production-appsync.degoo.com/graphql"
 URL_ACCESS_TOKEN = "https://rest-api.degoo.com/access-token"
 
@@ -87,18 +124,13 @@ URL_ACCESS_TOKEN = "https://rest-api.degoo.com/access-token"
 conf_dir = user_config_dir("degoo")
 
 # Local config and state files
-cred_file  = os.path.join(conf_dir, "credentials.json")
-cwd_file   = os.path.join(conf_dir, "cwd.json")
-keys_file  = os.path.join(conf_dir, "keys.json")
-DP_file    = os.path.join(conf_dir, "default_properties.txt")
-sched_file = os.path.join(conf_dir, "schedule.json")
+cred_file = os.path.join(conf_dir, "credentials.json")
+cwd_file = os.path.join(conf_dir, "cwd.json")
+keys_file = os.path.join(conf_dir, "keys.json")
+DP_file = os.path.join(conf_dir, "default_properties.txt")
 
-# Ensure the user configuration directory exists
-if not os.path.exists(conf_dir):
-    os.makedirs(conf_dir)
-    
 # A local cache of Degoo items and contents, to speed up successive queries for them
-# BY convention we have Degoo ID 0 as the root directory and the API returns no 
+# BY convention we have Degoo ID 0 as the root directory and the API returns no
 # properties for that so we dummy some up for local use to give it the appearance 
 # of a root directory.
 __CACHE_ITEMS__ = {0: {
@@ -113,6 +145,8 @@ __CACHE_ITEMS__ = {0: {
 __CACHE_CONTENTS__ = {}
 
 FILE_CHILDREN_LIMIT = 50
+
+api = None
 
 ###########################################################################
 # Support functions
@@ -205,32 +239,7 @@ if os.path.isfile(cwd_file):
     with open(cwd_file, "r") as file:
         CWD = json.loads(file.read())
 
-###########################################################################
-# Read a schedule file or write one with default schedule if not there.
-#
-# get and put should have an argument that is optional for respecting a
-# schedule and the commands a -s option to respect the schedule thus 
-# defined. 
-#
-# get and put should sleep outside of the schedule window.
-#
-# Time formats to be secified to they can be read with:
-#
-# time.strptime(time_string, "%H:%M:%S")
-
-DEFAULT_SCHEDULE = {  "upload": ("01:00:00", "06:00:00"), 
-                    "download": ("01:00:00", "06:00:00") }
-
-SCHEDULE = DEFAULT_SCHEDULE
-if os.path.isfile(sched_file):
-    with open(sched_file, "r") as file:
-        SCHEDULE = json.loads(file.read())
-else:
-    with open(sched_file, "w") as file:
-        file.write(json.dumps(DEFAULT_SCHEDULE))
-
-###########################################################################
-# Logging in is a prerequisite to using the API (a pre API step). The 
+# Logging in is a prerequisite to using the API (a pre API step). The
 # login function reads from the configure cred_file and writes keys the
 # API needs to the keys_file.
 
@@ -263,25 +272,25 @@ def login():
     if os.path.isfile(cred_file):
         with open(cred_file, "r") as file:
             CREDS = json.loads(file.read())
-    
+
     if CREDS:
-        response = requests.post(URL_login, data=json.dumps(CREDS))
-        
+        response = requests.post(URL_LOGIN, data=json.dumps(CREDS))
+
         if response.ok:
             rd = json.loads(response.text)
-            
+
             keys = {"Token": rd["Token"], "RefreshToken": rd["RefreshToken"], "x-api-key": api.API_KEY}
-        
+
             with open(keys_file, "w") as file:
                 file.write(json.dumps(keys))
-        
+
             return True
         else:
             return False
     else:
         with open(cred_file, "w") as file:
             file.write(json.dumps({"Username": "<your Degoo username here>", "Password": "<your Degoo password here>"}))
-            
+
         print(f"No login credentials available. Please add account details to {cred_file}", file=sys.stderr)
 
     if not os.path.isfile(DP_file):
@@ -291,8 +300,10 @@ def login():
         else:
             print(f"No properties are configured or available. If you can find the supplied file '{source_file}' copy it to '{DP_file}' and try again.")
 
+
 ###########################################################################
 # Bundle all the API interactions into an API class
+
 
 class API:
     # Empirically determined, largest value degoo supports for the Limit 
@@ -389,7 +400,10 @@ class API:
             with open(DP_file, "r") as file:
                 self.PROPERTIES = file.read()
 
-        self.CATLEN = max([len(n) for _,n in self.CATS.items()]) 
+        self.CATLEN = max([len(n) for _,n in self.CATS.items()])
+
+        global api
+        api = self
 
     def _human_readable_times(self, creation, modification, upload):
         '''
@@ -433,7 +447,7 @@ class API:
     def _get_token(self):
         expired_time = 0
         if self.KEYS["Token"] and self.KEYS["RefreshToken"]:
-            deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False})
+            deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False, "verify_aud": False})
             expired_time = deserialized['exp']
         else:
             print('Token and/or refresh token does not found. Login with Degoo')
@@ -1055,8 +1069,6 @@ class API:
         else:
             return response
     
-api = API()
-
 ###########################################################################
 # Command functions - these are entry points for the CLI tools
 
@@ -1495,18 +1507,6 @@ def get_file(remote_file, local_directory=None, verbose=0, if_missing=False, dry
     
     :returns: the FilePath property of the downloaded remote_file.
     '''
-    if schedule:
-        window = SCHEDULE["download"]
-        window_start = time.strptime(window[0], "%H:%M:%S")
-        window_end = time.strptime(window[1], "%H:%M:%S")
-        now = time.localtime()
-        
-        in_window = now > min(window_start, window_end) and now < max(window_start, window_end)
-        
-        if ((window_start < window_end and not in_window)
-        or  (window_start > window_end and in_window)):
-            wait_until_next(window_start, verbose)
-            
     item = get_item(remote_file)
     
     # If we landed here with a directory rather than remote_file, just redirect
@@ -1689,18 +1689,6 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
 
     :returns: A tuple containing the Degoo ID, Remote file path and the download URL of the local_file.
     '''
-    if schedule:
-        window = SCHEDULE["upload"]
-        window_start = time.strptime(window[0], "%H:%M:%S")
-        window_end = time.strptime(window[1], "%H:%M:%S")
-        now = time.localtime()
-
-        in_window = now > min(window_start, window_end) and now < max(window_start, window_end)
-
-        if ((window_start < window_end and not in_window)
-        or  (window_start > window_end and in_window)):
-            wait_until_next(window_start, verbose)
-
     dest = get_item(remote_folder)
     dir_id = dest["ID"]
     dir_path = dest["FilePath"]

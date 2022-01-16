@@ -44,13 +44,18 @@ Edit file **credentials.json** to enter your credentials (email and password)
 
 ## Basic usage
 
-First you must clone this project with ``git clone https://github.com/MDKPredator/degoo_drive``. You can then mount your unit by running the command ``python3 fuse_degoo.py /path/to/mount``
+First you must clone this project with ``git clone https://github.com/MDKPredator/degoo_drive``. You can then mount your unit by running the command `python3 fuse_degoo.py`. By default, drive is mounted in `/home/degoo`
 
 ## Options
 
 The following options are available:
 
-* ``--degoo-path`` Degoo base path to mount the drive. Default is root '/'
+* ``--mountpoint`` Path where drive will be mounted. Default is `/home/degoo`
+* ``--degoo-email`` Email to login in Degoo
+* ``--degoo-pass`` Password to login in Degoo
+* ``--degoo-token`` Token for requests. Alternative if login fails
+* ``--degoo-refresh-token`` Used when token expires. Alternative if login fails
+* ``--degoo-path`` Degoo base path to mount the drive. Default is root `/`
 * ``--cache-size`` Cache size of downloaded files. Only applies to media files
 * ``--debug`` Displays logs
 * ``--debug-fuse`` Displays the filesystem logs
@@ -71,6 +76,14 @@ This project includes a **Dockerfile** to mount the virtual drive. You will only
 2. Modify ``degoo_config/credentials.json``
 3. Create the image ``docker build -t degoo_drive .``
 4. Run container ``docker run -dit --privileged --name degoo degoo_drive``
+
+### Examples
+
+Here are some examples of how to pass arguments to the mounting drive
+
+* Run container with debug: ``docker run -dit --privileged --name degoo degoo_drive --debug``
+* Run container bypassing login (token and refrehs token): ``docker run -dit --privileged --name degoo degoo_drive --debug --degoo-token myLoginToken --degoo-refresh-token myRefreshToken``
+* Change default mountpoint: ``docker run -dit --privileged --name degoo degoo_drive --debug --mountpoint /degoo_drive``
 
 ## Degoo Drive and Plex
 
@@ -96,7 +109,13 @@ Login failed.
 8. Enter in **degoo_config** directory and modify the **credentials.json** file to enter your email and password
 9. Copy **credentials.json** and **default_properties.txt** to degoo config directory: ``cp credentials.json default_properties.txt /root/.config/degoo/``
 10. Re-run **degoo_login** to make sure all is correct. Remember to return to the previous directory: ``cd .. && python3 degoo_login``. You should now see the message ``Successfuly logged in.``
-11. Finally, mount the unit: ``mkdir -p /home/degoo && python3 fuse_degoo.py --debug --allow-other /home/degoo/ &``
+11. Finally, mount the unit: ``mkdir -p /home/degoo && python3 fuse_degoo.py --debug --allow-other &``
+
+# Login bypass
+
+If the login mechanism fails (lately cloudflare seems to cut the call with a **429 Too Many Requests**), you can bypass it by using directly the **token** and **refreshToken** provided by Degoo once logged in. To do so, go to https://app.degoo.com/login and open the developer tools to see this data.
+
+![Degoo login](images/degoo_token_refresh_token.png)
 
 # Disclaimer
 
