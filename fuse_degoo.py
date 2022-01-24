@@ -770,7 +770,7 @@ def parse_args(args):
     parser.add_argument('--allow-other', action='store_true',
                         help='Allow access to another users')
     parser.add_argument('--refresh-interval', type=int, default=10,
-                        help='Allow access to another users')
+                        help='Refresh deego content interval (default: 1 * 60sec')
     parser.add_argument('--disable-refresh', action='store_true', default=False,
                         help='Disable automatic refresh')
     parser.add_argument('--flood-sleep-time', action='store_true', default=60,
