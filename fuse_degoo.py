@@ -418,103 +418,75 @@ class Operations(pyfuse3.Operations):
 
         path_file = self._inode_to_path(fd, fullpath=True)
 
-        # Se obtiene el tipo del fichero
-        is_media = self._is_media(path_file)
+        degoo_file_size = self._get_degoo_element_by_id(fd)['Size']
+        size_to_read = offset + length
 
-        if not is_media:
-            url = degoo.get_url_file(path_file)
+        first_file_part = offset // self._cache_size
+        second_file_part = first_file_part + 1
 
-            if not url:
-                raise pyfuse3.FUSEError(errno.ENOENT)
+        # Get the filename
+        temp_filename = self._get_temp_file(path_file, first_file_part)
 
-            if isinstance(url, bytes):
-                # If are bytes, then it is the content of the file
-                return url
+        if not os.path.isfile(temp_filename):
+            self._check_requests()
+            self._cache_file(path_file, first_file_part, degoo_file_size)
 
-            try:
-                response = requests.get(url, headers={
-                    'Range': 'bytes=%s-%s' % (offset, offset + length - 1)
-                })
-                if response.status_code < 400:
-                    return response.content
-                else:
-                    log.debug('Error trying to download file [%s]. Code [%s] Message [%s]', path_file,
-                              str(response.status_code), response.content)
-                    raise pyfuse3.FUSEError(errno.ENOENT)
-            except urllib3.exceptions.HTTPError as e:
-                log.debug('Error getting info for file [%s]: %s', path_file, str(e))
-            except urllib3.exceptions.ReadTimeoutError as e:
-                log.debug('Timeout for file [%s]: %s', path_file, str(e))
+        result = size_to_read // self._cache_size
+
+        next_temp_filename = self._get_temp_file(path_file, second_file_part)
+
+        # 1 - Check that at least a percentage of the file has been read before downloading the next piece of data
+        # 2 - Check that the size to be read is smaller than the size of the file
+        if self._min_size_read_next_part < size_to_read < degoo_file_size \
+                and not cache_thread_running and not os.path.isfile(next_temp_filename):
+            self._check_requests()
+
+            log.debug('Preparing to download next file [%s]', next_temp_filename)
+            cache_thread_running = True
+            caching_file_list.append(next_temp_filename)
+            t1 = threading.Thread(target=self._cache_file, args=(path_file, second_file_part, degoo_file_size,))
+            t1.start()
+
+        if not os.path.isfile(temp_filename):
+            raise pyfuse3.FUSEError(errno.ENOENT)
+
+        file_descriptor = os.open(temp_filename, os.O_RDONLY)
+        # If the reading is done from the same file
+        if offset - (result * self._cache_size) >= 0:
+            os.lseek(file_descriptor, offset - (result * self._cache_size), os.SEEK_SET)
+            byte = os.read(file_descriptor, length)
+            os.close(file_descriptor)
         else:
-            degoo_file_size = self._get_degoo_element_by_id(fd)['Size']
-            size_to_read = offset + length
+            log.debug('Reading first part from two files. File 1 [%s]', temp_filename)
 
-            first_file_part = offset // self._cache_size
-            second_file_part = first_file_part + 1
+            # Otherwise, there is a part that is read from one file, and the next from another
+            part_offset = self._cache_size - ((result * self._cache_size) - offset)
+            os.lseek(file_descriptor, part_offset, os.SEEK_SET)
+            # The reading is made from where it corresponds to the end of the file
+            byte = os.read(file_descriptor, self._cache_size - length)
+            os.close(file_descriptor)
 
-            # Get the filename
-            temp_filename = self._get_temp_file(path_file, first_file_part)
+            log.debug('Reading second part from two files. File 2 [%s]', next_temp_filename)
 
-            if not os.path.isfile(temp_filename):
-                self._check_requests()
-                self._cache_file(path_file, first_file_part, degoo_file_size)
+            # All files are deleted, except the one to be read
+            self._clear_files(path_file, skip_filename=next_temp_filename)
 
-            result = size_to_read // self._cache_size
+            retries = 0
+            while next_temp_filename in caching_file_list and retries < 10:
+                log.debug('Waiting to read second part file [%s]', next_temp_filename)
+                retries += 1
+                time.sleep(0.5)
 
-            next_temp_filename = self._get_temp_file(path_file, second_file_part)
-
-            # 1 - Check that at least a percentage of the file has been read before downloading the next piece of data
-            # 2 - Check that the size to be read is smaller than the size of the file
-            if self._min_size_read_next_part < size_to_read < degoo_file_size \
-                    and not cache_thread_running and not os.path.isfile(next_temp_filename):
-                self._check_requests()
-
-                log.debug('Preparing to download next file [%s]', next_temp_filename)
-                cache_thread_running = True
-                caching_file_list.append(next_temp_filename)
-                t1 = threading.Thread(target=self._cache_file, args=(path_file, second_file_part, degoo_file_size,))
-                t1.start()
-
-            if not os.path.isfile(temp_filename):
+            if not os.path.isfile(next_temp_filename):
                 raise pyfuse3.FUSEError(errno.ENOENT)
 
-            file_descriptor = os.open(temp_filename, os.O_RDONLY)
-            # If the reading is done from the same file
-            if offset - (result * self._cache_size) >= 0:
-                os.lseek(file_descriptor, offset - (result * self._cache_size), os.SEEK_SET)
-                byte = os.read(file_descriptor, length)
-                os.close(file_descriptor)
-            else:
-                log.debug('Reading first part from two files. File 1 [%s]', temp_filename)
+            # The rest of the contents of the following file are read
+            file_descriptor = os.open(next_temp_filename, os.O_RDONLY)
+            os.lseek(file_descriptor, 0, os.SEEK_SET)
+            byte += os.read(file_descriptor, length - len(byte))
+            os.close(file_descriptor)
 
-                # Otherwise, there is a part that is read from one file, and the next from another
-                part_offset = self._cache_size - ((result * self._cache_size) - offset)
-                os.lseek(file_descriptor, part_offset, os.SEEK_SET)
-                # The reading is made from where it corresponds to the end of the file
-                byte = os.read(file_descriptor, self._cache_size - length)
-                os.close(file_descriptor)
-
-                log.debug('Reading second part from two files. File 2 [%s]', next_temp_filename)
-
-                # All files are deleted, except the one to be read
-                self._clear_files(path_file, skip_filename=next_temp_filename)
-
-                retries = 0
-                while next_temp_filename in caching_file_list and retries < 10:
-                    log.debug('Waiting to read second part file [%s]', next_temp_filename)
-                    retries += 1
-                    time.sleep(0.5)
-
-                if not os.path.isfile(next_temp_filename):
-                    raise pyfuse3.FUSEError(errno.ENOENT)
-
-                # The rest of the contents of the following file are read
-                file_descriptor = os.open(next_temp_filename, os.O_RDONLY)
-                os.lseek(file_descriptor, 0, os.SEEK_SET)
-                byte += os.read(file_descriptor, length - len(byte))
-                os.close(file_descriptor)
-
-            return byte
+        return byte
 
     async def write(self, fd, offset, buf):
         os.lseek(fd, offset, os.SEEK_SET)
@@ -618,9 +590,11 @@ class Operations(pyfuse3.Operations):
 
         url_parsed = urlparse(url)
         # It seems to go faster with the .eu domain
-        if self._change_hostname and url_parsed.hostname != DEGOO_HOSTNAME_EU:
+        if self._change_hostname and 'degoo' in url_parsed.hostname and url_parsed.hostname != DEGOO_HOSTNAME_EU:
             log.debug('Changing hostname [%s] to [%s]', url_parsed.hostname, DEGOO_HOSTNAME_EU)
             url = url_parsed._replace(netloc=DEGOO_HOSTNAME_EU).geturl()
+
+        is_media = self._is_media(degoo_path_file)
 
         size = (file_part * self._cache_size) + self._cache_size
 
@@ -633,7 +607,7 @@ class Operations(pyfuse3.Operations):
         if not os.path.isfile(temp_filename):
             log.debug('Downloading [%s] filepart %d-%s', temp_filename, file_part * self._cache_size, str(size))
             try:
-                response = requests.get(url, stream=True, headers={
+                response = requests.get(url, stream=is_media, headers={
                     'Range': 'bytes=%s-%s' % (file_part * self._cache_size, size)
                 })
 
@@ -762,7 +736,7 @@ def parse_args(args):
     parser.add_argument('--degoo-path', type=str, default=PATH_ROOT_DEGOO,
                         help='Absolute path from Degoo. Default is ' + PATH_ROOT_DEGOO)
     parser.add_argument('--cache-size', type=int, default=15,
-                        help='Size of downloaded piece of media files')
+                        help='Size of downloaded chunk')
     parser.add_argument('--debug', action='store_true', default=False,
                         help='Enable debugging output')
     parser.add_argument('--debug-fuse', action='store_true', default=False,
@@ -770,7 +744,7 @@ def parse_args(args):
     parser.add_argument('--allow-other', action='store_true',
                         help='Allow access to another users')
     parser.add_argument('--refresh-interval', type=int, default=10,
-                        help='Refresh deego content interval (default: 1 * 60sec')
+                        help='Refresh degoo content interval (default: 1 * 60sec')
     parser.add_argument('--disable-refresh', action='store_true', default=False,
                         help='Disable automatic refresh')
     parser.add_argument('--flood-sleep-time', action='store_true', default=60,

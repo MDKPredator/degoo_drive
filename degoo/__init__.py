@@ -447,7 +447,13 @@ class API:
     def _get_token(self):
         expired_time = 0
         if self.KEYS["Token"] and self.KEYS["RefreshToken"]:
-            deserialized = jwt.decode(self.KEYS["Token"], options={"verify_signature": False, "verify_aud": False})
+            deserialized = jwt.decode(
+                self.KEYS["Token"],
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_exp": False,
+                    "verify_nbf": False})
             expired_time = deserialized['exp']
         else:
             print('Token and/or refresh token does not found. Login with Degoo')
@@ -461,7 +467,7 @@ class API:
             if response.ok:
                 rd = json.loads(response.text)
 
-                keys = {"Token": rd["AccessToken"], "x-api-key": api.API_KEY}
+                keys = {"Token": rd["AccessToken"], "RefreshToken": self.KEYS["RefreshToken"], "x-api-key": api.API_KEY}
                 self.KEYS["Token"] = keys["Token"]
 
                 with open(keys_file, "w") as file:
