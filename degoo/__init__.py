@@ -307,7 +307,7 @@ def login():
 
 class API:
     # Empirically determined, largest value degoo supports for the Limit 
-    # on the Limit parameter to the GetFileChildren3 operation. It's used
+    # on the Limit parameter to the getFileChildren5 operation. It's used
     # for paging, and if more items exist there'll be a NextToken returned.
     # TODO: Determine the syntax and use of that NextToken so that paged 
     # results can be fecthed reliably as well. For now we just make calls 
@@ -352,13 +352,13 @@ class API:
     
     # Width of Name field for text output we produce
     # Used when listing files, updated to teh width needed to display
-    # the longest filename. Updated by getFileChildren3 when it returns 
+    # the longest filename. Updated by getFileChildren5 when it returns
     # a list of filenames.
     NAMELEN = 20
     
     # A list of Degoo Item properties. The three API calls:
     #    getOverlay3
-    #    getFileChildren3
+    #    getFileChildren5
     #    getFilesFromPaths
     # all want a list of explicit propeties it seems, that they will 
     # return. We want them all basically, and the superset of all known 
@@ -724,7 +724,7 @@ class API:
         else:
             raise DegooError(f"getOverlay3 failed with: {response.text}")
     
-    def getFileChildren3(self, dir_id, next_token=None):
+    def getFileChildren5(self, dir_id, next_token=None):
         '''
         A Degoo Graph API call: gets the contents of a Degoo directory (the children of a Degoo item that is a Folder)
         
@@ -733,11 +733,11 @@ class API:
         
         :returns: A list of property dictionaries, one for each child, contianing the properties of that child.
         '''
-        args = f"Items {{ {self.PROPERTIES} }} NextToken __typename"
-        func = f"getFileChildren3(Token: $Token, ParentID: $ParentID, Limit: $Limit, Order: $Order, NextToken: $NextToken) {{ {args} }}"
-        query = f"query GetFileChildren3($Token: String!, $ParentID: String!, $Limit: Int!, $Order: Int, $NextToken: String) {{ {func} }}"
-        
-        request = { "operationName": "GetFileChildren3",
+        args = f"Items {{ {self.PROPERTIES} }} NextToken"
+        func = f"getFileChildren5(Token: $Token, ParentID: $ParentID, AllParentIDs: $AllParentIDs, Limit: $Limit, Order: $Order, NextToken: $NextToken) {{ {args} }}"
+        query = f"query GetFileChildren5($Token: String!, $ParentID: String, $AllParentIDs: [String], $Limit: Int!, $Order: Int!, $NextToken: String) {{ {func} }}"
+
+        request = { "operationName": "GetFileChildren5",
                     "variables": {
                         "Token": self._get_token(),
                         "ParentID": -1 if dir_id == 0 else f"{dir_id}",
@@ -764,9 +764,9 @@ class API:
                     return []   
                 else:
                     message = '\n'.join(messages)
-                    raise DegooError(f"getFileChildren3 failed with: {message}")
+                    raise DegooError(f"getFileChildren5 failed with: {message}")
             else:
-                items = rd["data"]["getFileChildren3"]["Items"]
+                items = rd["data"]["getFileChildren5"]["Items"]
                 
                 if items:
                     # Fix FilePath by prepending it with a Device name.and converting 
@@ -777,7 +777,7 @@ class API:
                             i["CategoryName"] = self.CATS.get(i['Category'], i['Category'])
                     else:
                         # Get the device names if we're not getting a root dir
-                        # device_names calls back here (i.e. uses the getFileChildren3 API call)
+                        # device_names calls back here (i.e. uses the getFileChildren5 API call)
                         # with dir_id==0, to get_file the devices. We only need device names to prepend 
                         # paths with if we're looking deeper than root.
                         dns = device_names()
@@ -819,14 +819,14 @@ class API:
                     
                     self.NAMELEN = max([len(i["Name"]) for i in items])
 
-                    next = rd["data"]["getFileChildren3"]["NextToken"]  # @ReservedAssignment
+                    next = rd["data"]["getFileChildren5"]["NextToken"]  # @ReservedAssignment
                     if next:
-                        next_page = self.getFileChildren3(dir_id, next)
+                        next_page = self.getFileChildren5(dir_id, next)
                         items.extend(next_page)
                 
                 return items
         else:
-            raise DegooError(f"getFileChildren3 failed with: {response}")
+            raise DegooError(f"getFileChildren5 failed with: {response}")
 
     def getFilesFromPaths(self, device_id, path=""):
         '''
@@ -985,7 +985,7 @@ class API:
                 message = '\n'.join(messages)
                 raise DegooError(f"setUploadFile3 failed with: {message}")
             else:
-                contents = self.getFileChildren3(parent_id)
+                contents = self.getFileChildren5(parent_id)
                 for c in contents:
                     if c['Name'] == name:
                         c['isFolder'] = c.get("CategoryName") in api.folder_types
@@ -1442,7 +1442,7 @@ def get_children(directory=None):
         raise DegooError(f"get_children: Illegal directory: {directory}")
         
     if dir_id not in __CACHE_CONTENTS__:
-        __CACHE_CONTENTS__[dir_id] = api.getFileChildren3(dir_id)
+        __CACHE_CONTENTS__[dir_id] = api.getFileChildren5(dir_id)
         # Having the props of all children we cache those too
         # Can overwrite existing cache as this fetch is more current anyhow 
         for item in __CACHE_CONTENTS__[dir_id]:            

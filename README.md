@@ -56,7 +56,7 @@ The following options are available:
 * ``--degoo-token`` Token for requests. Alternative if login fails
 * ``--degoo-refresh-token`` Used when token expires. Alternative if login fails
 * ``--degoo-path`` Degoo base path to mount the drive. Default is root `/`
-* ``--cache-size`` Cache size of downloaded files. Only applies to media files
+* ``--cache-size`` Size of downloaded chunk
 * ``--debug`` Displays logs
 * ``--debug-fuse`` Displays the filesystem logs
 * ``--allow-other`` Allows other users to access files
