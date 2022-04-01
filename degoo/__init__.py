@@ -144,7 +144,7 @@ __CACHE_ITEMS__ = {0: {
                     }
 __CACHE_CONTENTS__ = {}
 
-FILE_CHILDREN_LIMIT = 50
+FILE_CHILDREN_LIMIT = 100
 
 api = None
 
@@ -447,14 +447,16 @@ class API:
     def _get_token(self):
         expired_time = 0
         if self.KEYS["Token"] and self.KEYS["RefreshToken"]:
-            deserialized = jwt.decode(
-                self.KEYS["Token"],
-                options={
-                    "verify_signature": False,
-                    "verify_aud": False,
-                    "verify_exp": False,
-                    "verify_nbf": False})
-            expired_time = deserialized['exp']
+            try:
+                deserialized = jwt.decode(
+                    self.KEYS["Token"],
+                    options={
+                        "verify_signature": False,
+                        "verify_aud": False,
+                        "verify_nbf": False})
+                expired_time = deserialized['exp']
+            except jwt.ExpiredSignatureError:
+                pass
         else:
             print('Token and/or refresh token does not found. Login with Degoo')
             login()
@@ -1001,7 +1003,7 @@ class API:
         else:
             raise DegooError(f"setUploadFile3 failed with: {response}")
         
-    def getBucketWriteAuth4(self, dir_id):
+    def getBucketWriteAuth4(self, dir_id, filename, size, checksum):
         '''
         A Degoo Graph API call: Appears to kick stat the file upload process.
         
@@ -1010,16 +1012,21 @@ class API:
         
         :param dir_id:
         '''
-        kv = " {Key Value __typename}"
-        args = "\n".join(["PolicyBase64", "Signature", "BaseURL", "KeyPrefix", "AccessKey"+kv, "ACL",  "AdditionalBody"+kv, "__typename"])
-        func = f"getBucketWriteAuth4(Token: $Token, ParentID: $ParentID, StorageUploadInfos: $StorageUploadInfos) {{ AuthData {{ {args} }} }}"
+        kv = " {Key Value}"
+        args = "\n".join(["PolicyBase64", "Signature", "BaseURL", "KeyPrefix", "AccessKey"+kv, "ACL",  "AdditionalBody"+kv])
+        func = f"getBucketWriteAuth4(Token: $Token, ParentID: $ParentID, StorageUploadInfos: $StorageUploadInfos) {{ AuthData {{ {args} }} Error }}"
         query = f"query GetBucketWriteAuth4($Token: String!, $ParentID: String!, $StorageUploadInfos: [StorageUploadInfo2]) {{ {func} }}"
         
         request = { "operationName": "GetBucketWriteAuth4",
                     "variables": {
                         "Token": self._get_token(),
                         "ParentID": f"{dir_id}",
-                        "StorageUploadInfos":[]
+                        "StorageUploadInfos": [{
+                            "Checksum": checksum,
+                            "FileName": filename,
+                            "Size": size
+                        }]
+                        # "StorageUploadInfos": []
                         },
                     "query": query
                    }
@@ -1031,10 +1038,10 @@ class API:
         if response.ok:
             rd = json.loads(response.text)
 
-            if "errors" in rd:
+            if len(rd['data']['getBucketWriteAuth4']) > 0 and rd['data']['getBucketWriteAuth4'][0]['Error'] is not None:
                 messages = []
-                for error in rd["errors"]:
-                    messages.append(error["message"])
+                for error in rd['data']['getBucketWriteAuth4']:
+                    messages.append(error["Error"])
                 message = '\n'.join(messages)
                 raise DegooError(f"getBucketWriteAuth4 failed with: {message}")
             else:
@@ -1725,12 +1732,23 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
             filename = os.path.basename(local_file)
             MimeTypeOfFile = mimetypes.guess_type(filename)[0]
 
+            # This one is a bit mysterious. The Key seems to be made up of 4 parts
+            # separated by /. The first two are provided by getBucketWriteAuth4 as
+            # as the KeyPrefix, the next appears to be the local_file extension, and the
+            # last an apparent filename that is consctucted as checksum.extension.
+            # Odd, to say the least.
+            Type = os.path.splitext(local_file)[1][1:]
+            Checksum = api.check_sum(local_file)
+
+            # We need filesize
+            Size = os.path.getsize(local_file)
+
             #################################################################
             ## STEP 1: getBucketWriteAuth4
 
             # Get the Authorisation to write to this directory
             # Provides the metdata we need for the upload
-            result = api.getBucketWriteAuth4(dir_id)
+            result = api.getBucketWriteAuth4(dir_id, filename, Size, Checksum)
 
             #################################################################
             ## STEP 2: POST to BaseURL
@@ -1747,23 +1765,15 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
             ACL = result["AuthData"]["ACL"]
             KeyPrefix = result["AuthData"]["KeyPrefix"]  # Has a trailing /
 
-            # This one is a bit mysterious. The Key seems to be made up of 4 parts
-            # separated by /. The first two are provided by getBucketWriteAuth4 as
-            # as the KeyPrefix, the next appears to be the local_file extension, and the
-            # last an apparent filename that is consctucted as checksum.extension.
-            # Odd, to say the least.
-            Type = os.path.splitext(local_file)[1][1:]
-            Checksum = api.check_sum(local_file)
-
             if Type:
+                # if 'wasabisys' in BaseURL:
+                #     Key = "{}{}".format(KeyPrefix, filename)
+                # else:
                 Key = "{}{}/{}.{}".format(KeyPrefix, Type, Checksum, Type)
             else:
                 # TODO: When there is no local_file extension, the Degoo webapp uses "unknown"
                 # This requires a little more testing. It seems to work with any value.
                 Key = "{}{}/{}.{}".format(KeyPrefix, "@", Checksum, "@")
-
-            # We need filesize
-            Size = os.path.getsize(local_file)
 
             # Now upload the local_file
             parts = [
@@ -1789,10 +1799,8 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
 
             # We expect a 204 status result, which is silent acknowledgement of success.
             if response.ok and response.status_code == 204:
-                # Theeres'a Google Upload ID returned in the headers. Not sure what use it is.
-                google_id = response.headers["X-GUploader-UploadID"]  # @UnusedVariable
 
-                if verbose>1:
+                if verbose > 1:
                     print("Google Response Headers:")
                     for h in response.headers:
                         print(f"\t{h}: {response.headers[h]}")
@@ -1862,7 +1870,8 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
 
                 return (degoo_id, Path, URL)
             else:
-                raise DegooError(f"Upload failed with: Failed with: {response}")
+                error_message = str(response.status_code) + ' ' + response.text
+                raise DegooError(f"Upload failed with: {error_message}")
     else:
         if dry_run and verbose:
             print(f"Would NOT upload {local_file} to {dir_path} as it has not changed since last upload.")

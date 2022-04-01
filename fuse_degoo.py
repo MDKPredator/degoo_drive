@@ -503,15 +503,20 @@ class Operations(pyfuse3.Operations):
             target_path = self._degoo_path[inode]
             log.debug('Uploading file [%s] to Degoo path [%s]', filename, target_path)
 
-            degoo_id, path, URL = degoo.put(source_file, target_path)
+            try:
+                degoo_id, path, URL = degoo.put(source_file, target_path)
 
-            log.debug('Upload of file [%s] finished. Id [%s] Url [%s]', filename, degoo_id, URL)
-            if not URL:
-                log.debug('WARN: file [%s] has not been uploaded successfully', filename)
+                log.debug('Upload of file [%s] finished. Id [%s] Url [%s]', filename, degoo_id, URL)
 
-            # Get the attributes of the new directory
-            attr = self._get_degoo_attrs(path)
-            self._add_path(attr.st_ino, path)
+                if not URL:
+                    log.debug('WARN: file [%s] has not been uploaded successfully', filename)
+
+                # Get the attributes of the new directory
+                attr = self._get_degoo_attrs(path)
+                self._add_path(attr.st_ino, path)
+            except degoo.DegooError as e:
+                log.debug('ERROR uploading file [{}]: {}'.format(filename, e.msg))
+                pass
 
         return length
 

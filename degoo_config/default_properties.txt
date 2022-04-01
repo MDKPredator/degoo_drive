@@ -20,34 +20,34 @@ Likes
 IsHidden
 IsInRecycleBin
 Description
-Location2
-{
-    Country
-Province
-Place
-GeoLocation
-{
+Location2 {
+  Country
+  Province
+  Place
+  GeoLocation {
     Latitude
-Longitude
-}
+    Longitude
+  }
 }
 Data
 DataBlock
 CompressionParameters
-ShareInfo
-{
-    Status
-ShareTime
+Shareinfo {
+  Status
+  ShareTime
+}
+ShareInfo {
+  Status
+  ShareTime
 }
 Distance
 OptimizedURL
 Country
 Province
 Place
-GeoLocation
-{
-    Latitude
-Longitude
+GeoLocation {
+  Latitude
+  Longitude
 }
 Location
 IsShared
