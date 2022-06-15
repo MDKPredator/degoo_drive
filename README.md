@@ -17,6 +17,7 @@ apt install -y libfuse3-dev fuse3
 apt install -y python3.8
 apt install -y python3-pip
 apt install -y pkg-config
+apt install -y python3.8-dev
 
 python3.8 -m pip install appdirs wget python-magic humanize humanfriendly python-dateutil requests clint requests_toolbelt pyfuse3 pyjwt
 ````
@@ -67,6 +68,8 @@ The following options are available:
 * ``--flood-time-to-check`` Request control period, in minutes
 * ``--change-hostname`` Disable change domain for media files. Default is **false**
 * ``--mode`` How to read the content. **Lazy** (default) reads as browsing (recommended for large content). **Eager** to read all content the first time
+* ``--config-path`` Path to the configuration files. Default is **~/.config/degoo/**
+* ``--plex-split-file`` (Experimental) Check if there are split files to cache the first part
 
 ## Docker
 

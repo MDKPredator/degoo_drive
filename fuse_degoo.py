@@ -22,6 +22,7 @@ import pyfuse3
 import requests
 import trio
 import urllib3
+import re
 from pyfuse3 import FUSEError
 
 import degoo
@@ -48,8 +49,6 @@ percentage_read = 25
 
 is_refresh_enabled = True
 
-cache_thread_running = False
-
 caching_file_list = []
 
 threadLock = threading.Lock()
@@ -61,7 +60,7 @@ class Operations(pyfuse3.Operations):
     enable_writeback_cache = True
 
     def __init__(self, source, cache_size, flood_sleep_time, flood_time_to_check, flood_max_requests,
-                 enable_flood_control, change_hostname, mode):
+                 enable_flood_control, change_hostname, mode, plex_split_file):
         super().__init__()
         self._inode_path_map = {pyfuse3.ROOT_INODE: source}
         self._source = source
@@ -84,6 +83,7 @@ class Operations(pyfuse3.Operations):
         # Change hostname sent by Degoo for .eu
         self._change_hostname = change_hostname
         self._mode = mode
+        self._plex_split_file = plex_split_file
 
     def _set_id_root_degoo(self, id_degoo):
         self._id_root_degoo = id_degoo
@@ -398,7 +398,7 @@ class Operations(pyfuse3.Operations):
         return pyfuse3.FileInfo(fh=inode)
 
     async def create(self, inode_p, name, mode, flags, ctx):
-        path = self._get_temp_directory() + fsdecode(name)
+        path = os.path.join(self._get_temp_directory(), fsdecode(name))
         try:
             if os.path.exists(path):
                 os.remove(path)
@@ -414,8 +414,6 @@ class Operations(pyfuse3.Operations):
         return pyfuse3.FileInfo(fh=fd, direct_io=True), attr
 
     async def read(self, fd, offset, length):
-        global cache_thread_running
-
         path_file = self._inode_to_path(fd, fullpath=True)
 
         degoo_file_size = self._get_degoo_element_by_id(fd)['Size']
@@ -438,14 +436,18 @@ class Operations(pyfuse3.Operations):
         # 1 - Check that at least a percentage of the file has been read before downloading the next piece of data
         # 2 - Check that the size to be read is smaller than the size of the file
         if self._min_size_read_next_part < size_to_read < degoo_file_size \
-                and not cache_thread_running and not os.path.isfile(next_temp_filename):
+                and second_file_part * self._cache_size < degoo_file_size \
+                and next_temp_filename not in caching_file_list and not os.path.isfile(next_temp_filename):
             self._check_requests()
 
             log.debug('Preparing to download next file [%s]', next_temp_filename)
-            cache_thread_running = True
             caching_file_list.append(next_temp_filename)
             t1 = threading.Thread(target=self._cache_file, args=(path_file, second_file_part, degoo_file_size,))
             t1.start()
+
+            # If a file is split, plex plays them as one if they meet a certain pattern
+            # This function checks and downloads if this happens to avoid skips in the playback
+            self.check_and_split_file(path_file)
 
         if not os.path.isfile(temp_filename):
             raise pyfuse3.FUSEError(errno.ENOENT)
@@ -488,6 +490,53 @@ class Operations(pyfuse3.Operations):
 
         return byte
 
+    def check_and_split_file(self, path_file):
+        if self._plex_split_file:
+            temp_filename = self._get_temp_file(path_file, 0)
+
+            if temp_filename not in caching_file_list and not os.path.isfile(temp_filename) \
+                    and self._is_media(path_file):
+
+                fd_new_part = self._get_next_part_split_file(path_file)
+                if fd_new_part:
+                    path_file_new_part = self._inode_to_path(fd_new_part, fullpath=True)
+                    degoo_file_size_new_part = self._get_degoo_element_by_id(fd_new_part)['Size']
+                    last_part = degoo_file_size_new_part // self._cache_size
+
+                    self._check_requests()
+
+                    caching_file_list.append(temp_filename)
+                    pre_cache_parts = [0, 1, last_part]
+                    for part in pre_cache_parts:
+                        log.debug('Precaching split file %s, part %d', path_file_new_part, part)
+                        t1 = threading.Thread(target=self._cache_file,
+                                              args=(path_file_new_part, part, degoo_file_size_new_part,))
+                        t1.start()
+
+    def _get_next_part_split_file(self, path_file):
+        fd_new_part = None
+        filename = self._get_filename(path_file)
+        if filename.rfind('.'):
+            name = filename[:filename.rfind('.')]
+        else:
+            name = filename
+
+        match = re.search(r'(cd|disc|disk|dvd|part|pt)\d+', name)
+        if match:
+            path = path_file[:path_file.rfind('/')]
+            folder_id = self._get_degoo_id(path)
+            children = self._get_degoo_childs(folder_id)
+            next_part = int(match.group().replace(match.group(1), '')) + 1
+
+            # Search next split file
+            for element in children:
+                match = re.search(r'(cd|disc|disk|dvd|part|pt)' + str(next_part), element['Name'])
+                if match:
+                    fd_new_part = element['ID']
+                    break
+
+        return fd_new_part
+
     async def write(self, fd, offset, buf):
         os.lseek(fd, offset, os.SEEK_SET)
         length = os.write(fd, buf)
@@ -504,11 +553,11 @@ class Operations(pyfuse3.Operations):
             log.debug('Uploading file [%s] to Degoo path [%s]', filename, target_path)
 
             try:
-                degoo_id, path, URL = degoo.put(source_file, target_path)
+                degoo_id, path, url = degoo.put(source_file, target_path)
 
-                log.debug('Upload of file [%s] finished. Id [%s] Url [%s]', filename, degoo_id, URL)
+                log.debug('Upload of file [%s] finished. Id [%s] Url [%s]', filename, degoo_id, url)
 
-                if not URL:
+                if not url:
                     log.debug('WARN: file [%s] has not been uploaded successfully', filename)
 
                 # Get the attributes of the new directory
@@ -525,6 +574,17 @@ class Operations(pyfuse3.Operations):
             element = self._get_degoo_element_by_id(fd)
             filename = self._get_filename(element['FilePath'])
 
+            if self._plex_split_file:
+                fd_new_part = self._get_next_part_split_file(element['FilePath'])
+                # log.debug('fd encontrado %s', str(fd_new_part))
+                if fd_new_part:
+                    # degoo_path_file = self._inode_to_path(fd_new_part, fullpath=True)
+                    # skip_filename = self._get_temp_file(degoo_path_file, 0)
+                    # log.debug('Skip release file part %s', skip_filename)
+                    log.debug('Skipping release file part of file %s', filename)
+                    return
+
+            log.debug('Releasing file %s', filename)
             self._clear_files(filename)
 
             return
@@ -580,12 +640,10 @@ class Operations(pyfuse3.Operations):
         if mimetype_file is not None:
             mimetype_file = mimetype_file.split('/')[0]
 
-            if mimetype_file == 'audio' or mimetype_file == 'video':
-                is_media_type = True
+            is_media_type = mimetype_file == 'audio' or mimetype_file == 'video'
         return is_media_type
 
     def _cache_file(self, degoo_path_file, file_part, degoo_file_size):
-        global cache_thread_running
         global caching_file_list
 
         url = degoo.get_url_file(degoo_path_file)
@@ -634,13 +692,17 @@ class Operations(pyfuse3.Operations):
                 log.debug('Error getting info for file [%s]: %s', temp_filename, str(e))
             except urllib3.exceptions.ReadTimeoutError as e:
                 log.debug('Timeout for file [%s]: %s', temp_filename, str(e))
+        else:
+            log.debug('The file [%s] is already downloaded', temp_filename)
 
         if temp_filename in caching_file_list:
             caching_file_list.remove(temp_filename)
-        cache_thread_running = False
 
     def _get_temp_directory(self):
-        return tempfile.gettempdir() + os.sep
+        temp_directory = os.path.join(tempfile.gettempdir(), 'degoo')
+        if not os.path.exists(temp_directory):
+            os.makedirs(temp_directory)
+        return temp_directory
 
     def _get_filename(self, path_file):
         filename = path_file
@@ -655,7 +717,7 @@ class Operations(pyfuse3.Operations):
         extension = filename[filename.rfind('.') + 1:]
         temp_filename = name + '_' + str(filepart) + '.' + extension
 
-        return self._get_temp_directory() + temp_filename
+        return os.path.join(self._get_temp_directory(), temp_filename)
 
     def _clear_files(self, filename, skip_filename=None):
         filename = self._get_filename(filename)
@@ -667,7 +729,7 @@ class Operations(pyfuse3.Operations):
             skip_filename = skip_filename[skip_filename.rfind('/') + 1:]
 
         filename = glob.escape(filename)
-        for file in glob.glob(self._get_temp_directory() + filename + "*", recursive=False):
+        for file in glob.glob(os.path.join(self._get_temp_directory(), filename) + "*", recursive=False):
             if self._get_filename(file) != skip_filename:
                 log.debug('Removing part %s', file)
                 os.remove(file)
@@ -686,6 +748,32 @@ class Operations(pyfuse3.Operations):
                     # If the element exists, but has changed its path
                     del self._inode_path_map[inode]
                     self._add_path(inode, path)
+
+    def run_maintenance(self, interval=60):
+        cease_continuous_run = threading.Event()
+
+        class ScheduleThread(threading.Thread):
+            @classmethod
+            def run(cls):
+                while not cease_continuous_run.is_set():
+                    for file in glob.glob(self._get_temp_directory() + os.sep + "*", recursive=False):
+                        try:
+                            file_stat = os.stat(file)
+                            now = datetime.datetime.now()
+                            access_time = datetime.datetime.fromtimestamp(file_stat[stat_m.ST_ATIME])
+                            seconds = (now - access_time).total_seconds()
+                            hours = divmod(seconds, 3600)[0]
+                            if hours > 1:
+                                log.debug('Maintenance: Removing file %s', file)
+                                os.remove(file)
+                        except FileNotFoundError:
+                            pass
+
+                    time.sleep(interval)
+
+        continuous_thread = ScheduleThread()
+        continuous_thread.start()
+        return cease_continuous_run
 
     def refresh_degoo_content(self, refresh_interval):
         while is_refresh_enabled:
@@ -767,6 +855,8 @@ def parse_args(args):
     parser.add_argument('--config-path', type=str,
                         help='Path to the configuration files. Default is ~/.config/degoo/ (useful for setting up '
                              'multiple accounts at the same time, for example)')
+    parser.add_argument('--plex-split-file', action='store_true', default=False,
+                        help='Check if there are split files to cache the first part')
 
     return parser.parse_args(args)
 
@@ -787,6 +877,7 @@ def main():
     change_hostname = options.change_hostname
     mode = options.mode
     config_path = options.config_path
+    plex_split_file = options.plex_split_file
 
     log.debug('##### Initializating Degoo drive #####')
     log.debug('Local mount point:   %s', options.mountpoint)
@@ -805,6 +896,7 @@ def main():
         log.debug('Flood max requests:  %s', str(options.flood_max_requests))
         log.debug('Flood time check:    %s minute(s)', str(options.flood_time_to_check))
     log.debug('Change hostname:     %s', 'Disabled' if not change_hostname else DEGOO_HOSTNAME_EU)
+    log.debug('Search split files:  %s', 'Enabled' if plex_split_file else 'Disabled')
     log.debug('Mode:                %s', mode)
     if config_path:
         log.debug('Configuration path:  %s', config_path)
@@ -817,7 +909,7 @@ def main():
     operations = Operations(source=degoo_path, cache_size=cache_size, flood_sleep_time=options.flood_sleep_time,
                             flood_time_to_check=options.flood_time_to_check,
                             flood_max_requests=options.flood_max_requests, enable_flood_control=enable_flood_control,
-                            change_hostname=change_hostname, mode=mode)
+                            change_hostname=change_hostname, mode=mode, plex_split_file=plex_split_file)
 
     log.debug('Reading Degoo content from directory %s', degoo_path)
 
@@ -843,14 +935,20 @@ def main():
         t1 = threading.Thread(target=operations.refresh_degoo_content, args=(refresh_interval,))
         t1.start()
 
+    run_maintenance = None
+    if plex_split_file:
+        run_maintenance = operations.run_maintenance()
+
     try:
         log.debug('Entering main loop..')
         trio.run(pyfuse3.main)
-    except:
+    except Exception:
         print('Unexpected error: ', sys.exc_info()[0])
         global is_refresh_enabled
         is_refresh_enabled = False
         pyfuse3.close(unmount=True)
+        if run_maintenance:
+            run_maintenance.set()
         raise
 
     log.debug('Unmounting..')
