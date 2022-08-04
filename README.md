@@ -4,7 +4,7 @@ Because Degoo does not provide a way to use their application as a virtual drive
 
 ## Requirements
 
-* pyfuse3 requires the **libfuse3-dev** and **fuse3** libraries to run. These can be installed via ``apt install -y libfuse3-dev fuse3`` (Available from **Ubunt 20.04**)
+* pyfuse3 requires the **libfuse3-dev** and **fuse3** libraries to run. These can be installed via ``apt install -y libfuse3-dev fuse3`` (Available from **Ubuntu 20.04**)
 * Degoo CLI requires **python 3.8** and dependencies included in [requirements.txt](https://github.com/bernd-wechner/Degoo/blob/master/requirements.txt)
 * And this project requires both of the above
 
