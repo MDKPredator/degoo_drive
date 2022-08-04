@@ -237,16 +237,16 @@ class Operations(pyfuse3.Operations):
 
         try:
             entry.st_atime_ns = int(element['LastUploadTime']) * 1e9
-        except KeyError:
+        except (KeyError, TypeError):
             entry.st_atime_ns = timestamp
         try:
             entry.st_ctime_ns = int(element['LastModificationTime']) * 1e9
-        except KeyError:
+        except (KeyError, TypeError):
             entry.st_ctime_ns = timestamp
         try:
             creation_time = datetime.datetime.fromisoformat(element['CreationTime'])
             entry.st_mtime_ns = creation_time.timestamp() * 1e9
-        except KeyError:
+        except (KeyError, TypeError):
             entry.st_mtime_ns = timestamp
 
         return entry
