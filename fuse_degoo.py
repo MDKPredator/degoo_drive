@@ -576,11 +576,7 @@ class Operations(pyfuse3.Operations):
 
             if self._plex_split_file:
                 fd_new_part = self._get_next_part_split_file(element['FilePath'])
-                # log.debug('fd encontrado %s', str(fd_new_part))
                 if fd_new_part:
-                    # degoo_path_file = self._inode_to_path(fd_new_part, fullpath=True)
-                    # skip_filename = self._get_temp_file(degoo_path_file, 0)
-                    # log.debug('Skip release file part %s', skip_filename)
                     log.debug('Skipping release file part of file %s', filename)
                     return
 
@@ -944,12 +940,13 @@ def main():
         trio.run(pyfuse3.main)
     except Exception:
         print('Unexpected error: ', sys.exc_info()[0])
+        raise
+    finally:
         global is_refresh_enabled
         is_refresh_enabled = False
-        pyfuse3.close(unmount=True)
         if run_maintenance:
             run_maintenance.set()
-        raise
+        pyfuse3.close(unmount=True)
 
     log.debug('Unmounting..')
     pyfuse3.close()

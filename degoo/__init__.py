@@ -389,16 +389,25 @@ class API:
             
             Sets CATLEN to the length fo the longest CAT name.
         '''
-        keys = {}
         if os.path.isfile(keys_file):
             with open(keys_file, "r") as file:
                 keys = json.loads(file.read())
+                if not keys["Token"]:
+                    raise DegooError("'Token' key not found")
+                if not keys["RefreshToken"]:
+                    raise DegooError("'RefreshToken' key not found")
+                if not keys["x-api-key"]:
+                    raise DegooError("'x-api-key' key not found")
+        else:
+            raise DegooError(f"File {keys_file} not found")
                 
         self.KEYS = keys
         
         if os.path.isfile(DP_file):
             with open(DP_file, "r") as file:
                 self.PROPERTIES = file.read()
+        else:
+            raise DegooError(f"File {DP_file} not found")
 
         self.CATLEN = max([len(n) for _,n in self.CATS.items()])
 
@@ -474,6 +483,9 @@ class API:
 
                 with open(keys_file, "w") as file:
                     file.write(json.dumps(keys))
+            else:
+                if login():
+                    self._get_token()
 
         return self.KEYS["Token"]
 
@@ -828,7 +840,7 @@ class API:
                 
                 return items
         else:
-            raise DegooError(f"getFileChildren5 failed with: {response}")
+            raise DegooError(f"getFileChildren5 failed with {response}: {response.text}")
 
     def getFilesFromPaths(self, device_id, path=""):
         '''
@@ -1026,7 +1038,6 @@ class API:
                             "FileName": filename,
                             "Size": size
                         }]
-                        # "StorageUploadInfos": []
                         },
                     "query": query
                    }
@@ -1766,9 +1777,6 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
             KeyPrefix = result["AuthData"]["KeyPrefix"]  # Has a trailing /
 
             if Type:
-                # if 'wasabisys' in BaseURL:
-                #     Key = "{}{}".format(KeyPrefix, filename)
-                # else:
                 Key = "{}{}/{}.{}".format(KeyPrefix, Type, Checksum, Type)
             else:
                 # TODO: When there is no local_file extension, the Degoo webapp uses "unknown"
