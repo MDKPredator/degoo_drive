@@ -648,6 +648,16 @@ class Operations(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENOENT)
 
         url_parsed = urlparse(url)
+
+        # the degoo.get_url_file() will return the content of small text files
+        if not url_parsed.scheme:
+            temp_filename = self._get_temp_file(degoo_path_file, file_part)
+            with open(temp_filename, 'wb') as out:
+                out.write(url)
+            if temp_filename in caching_file_list:
+                caching_file_list.remove(temp_filename)
+            return
+        
         # It seems to go faster with the .eu domain
         if self._change_hostname and 'degoo' in url_parsed.hostname and url_parsed.hostname != DEGOO_HOSTNAME_EU:
             log.debug('Changing hostname [%s] to [%s]', url_parsed.hostname, DEGOO_HOSTNAME_EU)
