@@ -38,6 +38,7 @@ Run **degoo_login** to create the directory with the configuration to access Deg
 * schedule.json
 * credentials.json
 * keys.json
+* overlay4.txt
 
 Edit file **credentials.json** to enter your credentials (email and password)
 
@@ -116,7 +117,7 @@ Login failed.
 
 # Login bypass
 
-If the login mechanism fails (lately cloudflare seems to cut the call with a **429 Too Many Requests**), you can bypass it by using directly the **token** and **refreshToken** provided by Degoo once logged in. To do so, go to https://app.degoo.com/login and open the developer tools to see this data.
+If login fails with a **429 Too Many Requests**, or similar, you can bypass it by using directly the **token** and **refreshToken** provided by Degoo once logged in. To do so, go to https://app.degoo.com/login and open the developer tools to see this data.
 
 ![Degoo login](images/degoo_token_refresh_token.png)
 

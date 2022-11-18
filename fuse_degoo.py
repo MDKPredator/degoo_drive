@@ -645,6 +645,7 @@ class Operations(pyfuse3.Operations):
         url = degoo.get_url_file(degoo_path_file)
 
         if not url:
+            log.debug('WARN: No url for file %s', degoo_path_file)
             raise pyfuse3.FUSEError(errno.ENOENT)
 
         url_parsed = urlparse(url)

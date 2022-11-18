@@ -128,6 +128,7 @@ cred_file = os.path.join(conf_dir, "credentials.json")
 cwd_file = os.path.join(conf_dir, "cwd.json")
 keys_file = os.path.join(conf_dir, "keys.json")
 DP_file = os.path.join(conf_dir, "default_properties.txt")
+overlay4_file = os.path.join(conf_dir, "overlay4.txt")
 
 # A local cache of Degoo items and contents, to speed up successive queries for them
 # BY convention we have Degoo ID 0 as the root directory and the API returns no
@@ -357,7 +358,7 @@ class API:
     NAMELEN = 20
     
     # A list of Degoo Item properties. The three API calls:
-    #    getOverlay3
+    #    getOverlay4
     #    getFileChildren5
     #    getFilesFromPaths
     # all want a list of explicit propeties it seems, that they will 
@@ -374,6 +375,7 @@ class API:
     # example if we could ask for the checksum that is canculated
     # when the file is upladed and provided to SetUploadFile2.
     PROPERTIES = ""
+    OVERLAY4 = ""
     
     def __init__(self):
         '''
@@ -408,6 +410,12 @@ class API:
                 self.PROPERTIES = file.read()
         else:
             raise DegooError(f"File {DP_file} not found")
+
+        if os.path.isfile(overlay4_file):
+            with open(overlay4_file, "r") as file:
+                self.OVERLAY4 = file.read()
+        else:
+            raise DegooError(f"File {overlay4_file} not found")
 
         self.CATLEN = max([len(n) for _,n in self.CATS.items()])
 
@@ -659,8 +667,8 @@ class API:
                 return {}
         else:
             raise DegooError(f"getUserInfo failed with: {response}")
-    
-    def getOverlay3(self, degoo_id):
+
+    def getOverlay4(self, degoo_id):
         '''
         A Degoo Graph API call: gets information about a degoo item identified by ID.
         
@@ -668,12 +676,11 @@ class API:
          
         :param degoo_id: The ID of the degoo item.
         '''
-        #args = self.PROPERTIES.replace("Size\n", "Size\nHash\n")
-        args = f"{self.PROPERTIES}"
-        func = f"getOverlay3(Token: $Token, ID: $ID) {{ {args} }}"
-        query = f"query GetOverlay3($Token: String!, $ID: IDType!) {{ {func} }}"
-        
-        request = { "operationName": "GetOverlay3",
+        args = f"{self.OVERLAY4}"
+        func = f"getOverlay4(Token: $Token, ID: $ID) {{ {args} }}"
+        query = f"query GetOverlay4($Token: String!, $ID: IDType!) {{ {func} }}"
+
+        request = { "operationName": "GetOverlay4",
                     "variables": {
                         "Token": self._get_token(),
                         "ID": {"FileID": degoo_id}
@@ -693,9 +700,9 @@ class API:
                 for error in rd["errors"]:
                     messages.append(error["message"])
                 message = '\n'.join(messages)
-                raise DegooError(f"getOverlay3 failed with: {message}")
+                raise DegooError(f"getOverlay4 failed with: {message}")
             else: 
-                properties = rd["data"]["getOverlay3"]
+                properties = rd["data"]["getOverlay4"]
             
             if properties:
                 
@@ -736,7 +743,7 @@ class API:
             else:
                 return {}
         else:
-            raise DegooError(f"getOverlay3 failed with: {response.text}")
+            raise DegooError(f"getOverlay4 failed with: {response.text}")
     
     def getFileChildren5(self, dir_id, next_token=None):
         '''
@@ -943,7 +950,7 @@ class API:
         To Add a file means to call getBucketWriteAuth4 to start the process, then
         upload the file content, then finally, create the Degoo file item that then 
         points to the actual file data with a URL. setUploadFile3 does not return 
-        that UTL, but getOverlay3 does.
+        that UTL, but getOverlay4 does.
         
         :param name:        The name of the file
         :param parent_id:   The Degoo ID of the Folder it will be placed in  
@@ -1069,19 +1076,6 @@ class API:
         
         Not successful yet alas.
         '''
-        
-        # A normal request looks like:
-        # {"operationName": "GetOverlay3", "variables": {"Token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySUQiOiIyMTU2Mjc4OCIsIm5iZiI6MTU5MTE1MjU1NCwiZXhwIjoxNjIyNjg4NTU0LCJpYXQiOjE1OTExNTI1NTR9.ZMbZ_Y_7bLQ_eerFssbKEr-QdujQ_p3LENeeKF-Niv4", "ID": {"FileID": 12589739461}}, "query": "query GetOverlay3($Token: String!, $ID: IDType!) { getOverlay3(Token: $Token, ID: $ID) { ID\\nMetadataID\\nUserID\\nDeviceID\\nMetadataKey\\nName\\nFilePath\\nLocalPath\\nURL\\nOptimizedURL\\nThumbnailURL\\nCreationTime\\nLastModificationTime\\nLastUploadTime\\nParentID\\nCategory\\nSize\\nPlatform\\nDistance\\nIsSelfLiked\\nLikes\\nIsHidden\\nIsInRecycleBin\\nDescription\\nCountry\\nProvince\\nPlace\\nLocation\\nLocation2 {Country Province Place __typename}\\nGeoLocation {Latitude Longitude __typename}\\nData\\nDataBlock\\nCompressionParameters\\nIsShared\\nShareTime\\nShareinfo {ShareTime __typename}\\n__typename\\n\\n } }"}
-        
-#         request = { "query": {
-#                         "__schema": {
-#                             "types": [
-#                                 { "name" : "Query"}
-#                              ]
-#                         }
-#                     }
-#                    }
-        
         request = '{"query":"{\n\t__schema: {\n queryType {\n fields{\n name\n }\n }\n }\n}"}'
         
         header = {"x-api-key": self.KEYS["x-api-key"]}
@@ -1233,7 +1227,7 @@ def rm(file):
     else:
         raise DegooError(f"rm: Illegal file: {file}")
 
-    path = api.getOverlay3(file_id)["FilePath"]
+    path = api.getOverlay4(file_id)["FilePath"]
     api.setDeleteFile5(file_id)
 
     if file_id in __CACHE_ITEMS__:
@@ -1363,7 +1357,7 @@ def get_item(path=None, verbose=0, recursive=False):
         # The root is special, it returns no properties from the degoo API
         # We dummy some up for internal use:
         if degoo_id not in __CACHE_ITEMS__:
-            __CACHE_ITEMS__[degoo_id] = api.getOverlay3(degoo_id)
+            __CACHE_ITEMS__[degoo_id] = api.getOverlay4(degoo_id)
         
         return __CACHE_ITEMS__[degoo_id]
 
@@ -1547,6 +1541,9 @@ def get_file(remote_file, local_directory=None, verbose=0, if_missing=False, dry
     URL = item.get("OptimizedURL", None)
     if not URL:
         URL = item.get("URL", None)
+        if not URL:
+            item = update_item(item["ID"])
+            URL = item.get("URL", None)
 
     if onlyUrl:
         return URL
@@ -1738,7 +1735,7 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
             # 1. Call getBucketWriteAuth4 to get the URL and parameters we need for upload
             # 2. Post to the BaseURL provided by that
             # 3. Call setUploadFile3 to inform Degoo it worked and create the Degoo item that maps to it
-            # 4. Call getOverlay3 to fetch the Degoo item this created so we can see that worked (and return the download URL)
+            # 4. Call getOverlay4 to fetch the Degoo item this created so we can see that worked (and return the download URL)
 
             filename = os.path.basename(local_file)
             MimeTypeOfFile = mimetypes.guess_type(filename)[0]
@@ -1847,7 +1844,7 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
 #                 #
 #                 # I'd bet that setUploadFile3 given he checksum can build that string and
 #                 # using the Degoo private key generate a signature. But alas it doestn't
-#                 # return one and so we need to use getOverlay3 to fetch it explicitly.
+#                 # return one and so we need to use getOverlay4 to fetch it explicitly.
 #                 expiry = str(int((datetime.datetime.utcnow() + datetime.timedelta(days=14)).timestamp()))
 #                 expected_URL = "".join([
 #                             BaseURL.replace("storage-upload.googleapis.com/",""),
@@ -1863,9 +1860,9 @@ def put_file(local_file, remote_folder, verbose=0, if_changed=False, dry_run=Fal
                 degoo_id = api.setUploadFile3(os.path.basename(local_file), dir_id, Size, Checksum)
 
                 #################################################################
-                ## STEP 4: getOverlay3
+                ## STEP 4: getOverlay4
 
-                props = api.getOverlay3(degoo_id)
+                props = api.getOverlay4(degoo_id)
 
                 Path = props['FilePath']
                 URL = props['URL']
@@ -2046,9 +2043,10 @@ def get_url_file(remote_file):
 
 
 def update_item(file_id):
-    item = api.getOverlay3(file_id)
+    item = api.getOverlay4(file_id)
     item['isFolder'] = item.get("CategoryName") in api.folder_types
     __CACHE_ITEMS__[file_id] = item
+    return item
 
 
 def create_callback(encoder):
