@@ -21,4 +21,5 @@ COPY degoo_config/default_properties.txt /root/.config/degoo/
 COPY degoo_config/keys.json /root/.config/degoo/
 COPY degoo_config/schedule.json /root/.config/degoo/
 COPY degoo_config/overlay4.txt /root/.config/degoo/
+
 ENTRYPOINT ["python3.8", "/degoo_drive/fuse_degoo.py"]
