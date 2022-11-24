@@ -74,7 +74,7 @@ class DegooError(Exception):
 
 
 class DegooConfig:
-    def __init__(self, config_dir=None, email=None, password=None, token=None, refresh_token=None):
+    def __init__(self, config_dir=None, email=None, password=None, refresh_token=None):
         # Get the path to user configuration diectory for this app
         if config_dir is None:
             config_dir = user_config_dir("degoo")
@@ -91,11 +91,12 @@ class DegooConfig:
 
         global keys_file
         keys_file = os.path.join(config_dir, "keys.json")
-        if token and refresh_token:
+        if refresh_token:
             with open(keys_file, "r") as jsonFile:
                 data = json.load(jsonFile)
 
-            data['Token'] = token
+            # Token will be requested when needed
+            data['Token'] = ''
             data['RefreshToken'] = refresh_token
 
             with open(keys_file, "w") as jsonFile:
@@ -119,6 +120,7 @@ command_prefix = "degoo_"
 URL_LOGIN = "https://rest-api.degoo.com/login"
 URL_API = "https://production-appsync.degoo.com/graphql"
 URL_ACCESS_TOKEN = "https://rest-api.degoo.com/access-token"
+URL_ACCESS_TOKEN_V2 = "https://rest-api.degoo.com/access-token/v2"
 
 # Get the path to user configuration diectory for this app
 conf_dir = user_config_dir("degoo")
@@ -394,7 +396,7 @@ class API:
         if os.path.isfile(keys_file):
             with open(keys_file, "r") as file:
                 keys = json.loads(file.read())
-                if not keys["Token"]:
+                if "Token" not in keys:
                     raise DegooError("'Token' key not found")
                 if not keys["RefreshToken"]:
                     raise DegooError("'RefreshToken' key not found")
@@ -459,11 +461,28 @@ class API:
         else:
             u_dt = no_date
         
-        return (c_dt, m_dt, u_dt)        
+        return (c_dt, m_dt, u_dt)
+
+    def _request_access_token(self):
+        keys = {"RefreshToken": self.KEYS["RefreshToken"]}
+        response = requests.post(URL_ACCESS_TOKEN_V2, data=json.dumps(keys))
+
+        if response.ok:
+            rd = json.loads(response.text)
+
+            keys = {"Token": rd["AccessToken"], "RefreshToken": self.KEYS["RefreshToken"], "x-api-key": api.API_KEY}
+            self.KEYS["Token"] = rd["AccessToken"]
+
+            with open(keys_file, "w") as file:
+                file.write(json.dumps(keys))
+
+            return True
+        else:
+            return False
     
     def _get_token(self):
         expired_time = 0
-        if self.KEYS["Token"] and self.KEYS["RefreshToken"]:
+        if self.KEYS["Token"]:
             try:
                 deserialized = jwt.decode(
                     self.KEYS["Token"],
@@ -475,10 +494,10 @@ class API:
             except jwt.ExpiredSignatureError:
                 pass
         else:
-            print('Token and/or refresh token does not found. Login with Degoo')
-            login()
+            print('Token and/or refresh token does not found. Requesting access token')
+            self._request_access_token()
 
-        if datetime.datetime.today().timestamp() > expired_time:
+        if self.KEYS["RefreshToken"] or datetime.datetime.today().timestamp() > expired_time:
             print('Token expired. Refreshing')
             data = {'refreshtoken': self.KEYS["RefreshToken"]}
             response = requests.post(URL_ACCESS_TOKEN, data=json.dumps(data))

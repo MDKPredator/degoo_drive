@@ -829,8 +829,6 @@ def parse_args(args):
                         help='Email to login in Degoo')
     parser.add_argument('--degoo-pass', type=str,
                         help='Password to login in Degoo')
-    parser.add_argument('--degoo-token', type=str,
-                        help='Token for requests. Alternative if login fails')
     parser.add_argument('--degoo-refresh-token', type=str,
                         help='Used when token expires. Alternative if login fails')
     parser.add_argument('--degoo-path', type=str, default=PATH_ROOT_DEGOO,
@@ -875,7 +873,6 @@ def main():
     cache_size = options.cache_size * 1024 * 1024
     degoo_email = options.degoo_email
     degoo_pass = options.degoo_pass
-    degoo_token = options.degoo_token
     degoo_refresh_token = options.degoo_refresh_token
     degoo_path = options.degoo_path
     refresh_interval = options.refresh_interval * 60
@@ -886,14 +883,13 @@ def main():
     config_path = options.config_path
     plex_split_file = options.plex_split_file
 
-    log.debug('##### Initializating Degoo drive #####')
+    log.debug('##### Initializing Degoo drive #####')
     log.debug('Local mount point:   %s', options.mountpoint)
     log.debug('Cache size:          %s', str(cache_size) + ' kb')
     if degoo_email and degoo_pass:
         log.debug('Degoo email:         %s', degoo_email)
         log.debug('Degoo pass:          %s', '*'*len(degoo_pass))
-    if degoo_token and degoo_refresh_token:
-        log.debug('Degoo token:         %s', '*'*len(degoo_token[:10]))
+    if degoo_refresh_token:
         log.debug('Degoo refresh token: %s', '*'*len(degoo_refresh_token[:10]))
     log.debug('Root Degoo path:     %s', degoo_path)
     log.debug('Refresh interval:    %s', 'Disabled' if disable_refresh else str(refresh_interval) + ' seconds')
@@ -920,8 +916,7 @@ def main():
 
     log.debug('Reading Degoo content from directory %s', degoo_path)
 
-    degoo.DegooConfig(config_path, email=degoo_email, password=degoo_pass,
-                      token=degoo_token, refresh_token=degoo_refresh_token)
+    degoo.DegooConfig(config_path, email=degoo_email, password=degoo_pass, refresh_token=degoo_refresh_token)
     degoo.API()
     operations.load_degoo_content()
 
