@@ -117,7 +117,7 @@ Login failed.
 
 # Login bypass
 
-If login fails with a **429 Too Many Requests**, or similar, you can bypass it by using directly the **token** and **refreshToken** provided by Degoo once logged in. To do so, go to https://app.degoo.com/login and open the developer tools to see this data.
+If login fails with a **429 Too Many Requests**, or similar, you can bypass it by using directly **refreshToken** provided by Degoo once logged in. To do so, go to https://app.degoo.com/login and open the developer tools to see this data.
 
 ![Degoo login](images/degoo_refresh_token.png)
 
