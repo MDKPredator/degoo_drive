@@ -55,7 +55,6 @@ The following options are available:
 * ``--mountpoint`` Path where drive will be mounted. Default is `/home/degoo`
 * ``--degoo-email`` Email to login in Degoo
 * ``--degoo-pass`` Password to login in Degoo
-* ``--degoo-token`` Token for requests. Alternative if login fails
 * ``--degoo-refresh-token`` Used when token expires. Alternative if login fails
 * ``--degoo-path`` Degoo base path to mount the drive. Default is root `/`
 * ``--cache-size`` Size of downloaded chunk
@@ -74,7 +73,7 @@ The following options are available:
 
 ## Docker
 
-This project includes a **Dockerfile** to mount the virtual drive. You will only need to modify the **credentials.json** file before creating the image:
+This project includes a [Dockerfile](Dockerfile) to mount the virtual drive. You will only need to modify the **credentials.json** file before creating the image:
 
 1. Clone this repository: ``git clone https://github.com/MDKPredator/degoo_drive``
 2. Modify ``degoo_config/credentials.json``
@@ -86,34 +85,18 @@ This project includes a **Dockerfile** to mount the virtual drive. You will only
 Here are some examples of how to pass arguments to the mounting drive
 
 * Run container with debug: ``docker run -dit --privileged --name degoo degoo_drive --debug``
-* Run container bypassing login (token and refrehs token): ``docker run -dit --privileged --name degoo degoo_drive --debug --degoo-token myLoginToken --degoo-refresh-token myRefreshToken``
+* Run container bypassing login (token and refrehs token): ``docker run -dit --privileged --name degoo degoo_drive --debug --degoo-refresh-token myRefreshToken``
 * Change default mountpoint: ``docker run -dit --privileged --name degoo degoo_drive --debug --mountpoint /degoo_drive``
 
 ## Degoo Drive and Plex
 
-You can also mount the virtual drive to use plex in a docker container. You will need the latest versions of plex which you can find [here](https://hub.docker.com/r/linuxserver/plex/tags). They should be at least the __bionic__ versions that include the **libfuse3-dev** and **fuse3** libraries, or higher. You can follow the steps below to do so: 
+You can use the docker file ([Dockerfile-plex](Dockerfile-plex)) included in the project to mount the container with the latest version of plex, and the virtual drive. Just follow these steps:
 
-1. First creates plex container:
-   
-    ````shell
-    docker create --name=plex --net=host --memory="2gb" --privileged --cap-add SYS_ADMIN --device /dev/fuse -e VERSION=latest -e PUID=1001 -e PGID=1001 -e TZ=Europe/Madrid -v /home/plex/config:/config -v /home/plex/tvshows:/data/tvshows -v /home/plex/movies:/data/movies -v /home/plex/transcode:/transcode linuxserver/plex:version-1.21.3.4021-5a0a3e4b2
-    ````
-
-2. Start container: ``docker start plex`` 
-3. Enter the container: ``docker exec -it plex bash``
-4. Install dependencies ([Requirements](#requirements) section)
-5. Clone this repository
-6. Enter the directory: ``cd degoo_drive``
-7. Log in Degoo: ``python3 degoo_login``. You will see the message:
-````shell
-No login credentials available. Please add account details to /root/.config/degoo/credentials.json
-No properties are configured or available. If you can find the supplied file 'default_properties.txt' copy it to '/root/.config/degoo/default_properties.txt' and try again.
-Login failed.
-````
-8. Enter in **degoo_config** directory and modify the **credentials.json** file to enter your email and password
-9. Copy **credentials.json** and **default_properties.txt** to degoo config directory: ``cp credentials.json default_properties.txt /root/.config/degoo/``
-10. Re-run **degoo_login** to make sure all is correct. Remember to return to the previous directory: ``cd .. && python3 degoo_login``. You should now see the message ``Successfuly logged in.``
-11. Finally, mount the unit: ``mkdir -p /home/degoo && python3 fuse_degoo.py --debug --allow-other &``
+1. Modify the [keys.json](degoo_config/keys.json) file to include **RefreshToken**
+2. Create the image: ```docker build -f Dockerfile-plex -t plex_degoo_drive .```
+3. Create the volumes in host
+4. Create the container: ```docker create --name=plex --net=host --memory="2gb" --privileged --cap-add SYS_ADMIN --device /dev/fuse -e VERSION=latest -e PUID=1001 -e PGID=1001 -e TZ=Europe/Madrid -v /path/to/volume/plex/config:/config -v /path/to/volume/plex/tvshows:/data/tvshows -v /path/to/volume/plex/movies:/data/movies -v /path/to/volume/plex/transcode:/transcode plex_degoo_drive```
+5. Go to http://localhost:32400/web/index.html
 
 # Login bypass
 

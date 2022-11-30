@@ -1,0 +1,31 @@
+FROM linuxserver/plex:latest
+
+RUN apt-get update \
+    && apt-get install -y python3 \
+    && apt-get install -y python3-pip \
+    && apt-get install -y python3-dev \
+    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y pkg-config \
+    && apt-get install -y libfuse3-dev fuse3
+
+RUN python3 -m pip install appdirs wget python-magic humanize humanfriendly python-dateutil requests clint requests_toolbelt pyfuse3 PyJWT
+
+RUN mkdir -p degoo_drive/degoo \
+    && mkdir -p /root/.config/degoo/ \
+    && mkdir -p /home/degoo
+
+COPY fuse_degoo.py degoo_drive
+COPY setup.py degoo_drive
+COPY degoo/__init__.py degoo_drive/degoo
+COPY src degoo_drive/src
+
+COPY degoo_config/credentials.json /root/.config/degoo/
+COPY degoo_config/default_properties.txt /root/.config/degoo/
+COPY degoo_config/keys.json /root/.config/degoo/
+COPY degoo_config/schedule.json /root/.config/degoo/
+COPY degoo_config/overlay4.txt /root/.config/degoo/
+
+COPY startup.sh /
+RUN ["chmod", "+x", "/startup.sh"]
+
+ENTRYPOINT ["/startup.sh"]
