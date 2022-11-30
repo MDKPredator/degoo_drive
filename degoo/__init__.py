@@ -494,25 +494,12 @@ class API:
             except jwt.ExpiredSignatureError:
                 pass
         else:
-            print('Token and/or refresh token does not found. Requesting access token')
+            print('Token does not found. Requesting access token')
             self._request_access_token()
 
-        if self.KEYS["RefreshToken"] or datetime.datetime.today().timestamp() > expired_time:
-            print('Token expired. Refreshing')
-            data = {'refreshtoken': self.KEYS["RefreshToken"]}
-            response = requests.post(URL_ACCESS_TOKEN, data=json.dumps(data))
-
-            if response.ok:
-                rd = json.loads(response.text)
-
-                keys = {"Token": rd["AccessToken"], "RefreshToken": self.KEYS["RefreshToken"], "x-api-key": api.API_KEY}
-                self.KEYS["Token"] = keys["Token"]
-
-                with open(keys_file, "w") as file:
-                    file.write(json.dumps(keys))
-            else:
-                if login():
-                    self._get_token()
+        if not self.KEYS["RefreshToken"] or (expired_time != 0 and datetime.datetime.today().timestamp() > expired_time):
+            print('Refresh token does not found, or token expired. Requesting access token')
+            self._request_access_token()
 
         return self.KEYS["Token"]
 
