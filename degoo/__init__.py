@@ -542,8 +542,8 @@ class API:
         # TODO: Can we move this from an hypothesis to a conclusion?
         CS = [10, len(cs)] + cs + [16, 0]
         
-        # Finally, Degoo base64 encode is cehcksum.
-        checksum = base64.b64encode(bytes(CS)).decode()
+        # Finally, Degoo base64 encode its checksum (make sure it is URL safe).
+        checksum = base64.b64encode(bytes(CS)).decode('UTF-8')
         
         return  checksum
 
